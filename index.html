@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <title>Bizkaibizi · Tiempo Real</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <link rel="icon" type="image/png" href="/img/bici-pin.png">
+  <link rel="icon" type="image/png" href="/img/favicon.png">
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=Nunito:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,300;1,400&display=swap" rel="stylesheet">
@@ -32,12 +32,11 @@
 
   <div class="topbar-right">
     <span id="api-last-updated" style="display:none; font-size: 0.85em; margin-right: 8px; white-space: nowrap; font-weight: 500;"></span>
-    <label id="polling-toggle" title="Actualización automática">
-      <div class="toggle-pill on" id="poll-pill"></div>
+    <div id="polling-toggle" title="Actualización automática (siempre activa)">
+      <span class="live-dot"></span>
       <span id="polling-label">Actualización automática</span>
       <span id="polling-countdown">30s</span>
-      <input type="checkbox" checked style="display:none" id="poll-check" onchange="togglePolling()">
-    </label>
+    </div>
     <div class="topbar-sep"></div>
     <button class="btn-icon" id="theme-toggle" onclick="toggleTheme()" title="Modo día/noche">🌙</button>
     <button class="btn-icon" id="mobile-toggle" onclick="toggleSidebar()" title="Menú">☰</button>
@@ -144,6 +143,7 @@ let markersLayer = null;
 let markerByUid = {};
 let map = null;
 const ICON = '/img/bici-pin.png';
+const ICON_EMPTY = '/img/bici-pin-vacio.png';
 
 // ═══════════════════════════════════════════════════════
 // CARGA DE DATOS
@@ -233,10 +233,11 @@ function initMap() {
 
 function makeStationIcon(station) {
   const empty = station.bikesAvailable === 0;
+  const iconUrl = empty ? ICON_EMPTY : ICON;
   return L.divIcon({
     className: '',
     html: `<div style="position:relative;width:30px;height:40px;">
-             <img class="bici-pin-icon" src="${ICON}" style="width:30px;height:40px;">
+             <img class="bici-pin-icon" src="${iconUrl}" style="width:30px;height:40px;">
              <span class="bici-pin-count ${empty ? 'empty' : ''}">${station.bikesAvailable}</span>
            </div>`,
     iconSize: [30, 40],
@@ -641,8 +642,10 @@ function toggleSidebar() {
 
 // ═══════════════════════════════════════════════════════
 // ACTUALIZACIÓN / POLLING
+// La actualización automática siempre está activa: los datos
+// de disponibilidad de bicis pierden sentido si no están al día.
 // ═══════════════════════════════════════════════════════
-let pollingActive = true, pollingSeconds = 30;
+let pollingSeconds = 30;
 let pollingTimer = null, countdownTimer = null;
 let lastApiUpdateDate = null;
 
@@ -658,18 +661,8 @@ function updateApiUpdateUI() {
 }
 window.addEventListener('resize', updateApiUpdateUI);
 
-function togglePolling() {
-  pollingActive = document.getElementById('poll-check').checked;
-  document.getElementById('poll-pill').classList.toggle('on', pollingActive);
-  if (pollingActive) startPollingCountdown();
-  else {
-    clearTimeout(pollingTimer); clearInterval(countdownTimer);
-    document.getElementById('polling-countdown').textContent = '—';
-  }
-}
 function startPollingCountdown() {
   clearTimeout(pollingTimer); clearInterval(countdownTimer);
-  if (!pollingActive) return;
   pollingSeconds = 30;
   document.getElementById('polling-countdown').textContent = `${pollingSeconds}s`;
   countdownTimer = setInterval(() => {
@@ -679,7 +672,6 @@ function startPollingCountdown() {
     if (pollingSeconds <= 0) clearInterval(countdownTimer);
   }, 1000);
   pollingTimer = setTimeout(async () => {
-    if (!pollingActive) return;
     await cargarDatos();
     startPollingCountdown();
   }, 30000);
