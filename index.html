@@ -549,6 +549,7 @@ async function calcularRuta() {
   
   if (window.innerWidth <= 768 && !sidebarOpen) toggleSidebar(true);
   currentView = null;
+  resetResultsScroll();
   hideAllPanels();
   const panel = document.getElementById('generic-list');
   panel.innerHTML = `<div class="empty-state"><span class="big">⏳</span>${nameO === UBICACION_LABEL ? 'Obteniendo tu ubicación…' : 'Preparando ruta…'}</div>`;
@@ -924,13 +925,19 @@ function hideAllPanels() {
     document.getElementById(id).style.display = 'none';
   });
 }
+function resetResultsScroll() {
+  const panel = document.getElementById('results-panel');
+  if (panel) panel.scrollTop = 0;
+}
 function renderEmptyState() {
   currentView = null;
+  resetResultsScroll();
   hideAllPanels();
   document.getElementById('empty-state').style.display = 'block';
 }
 function mostrarSinResultados(msg) {
   currentView = null;
+  resetResultsScroll();
   if (window.innerWidth <= 768 && !sidebarOpen) toggleSidebar(true);
   hideAllPanels();
   const el = document.getElementById('generic-list');
@@ -944,7 +951,14 @@ function mostrarSinResultados(msg) {
 let currentStationUid = null;
 function mostrarEstacion(station, moverMapa, silent) {
   if (!station) return;
-  if (!silent && window.innerWidth <= 768 && !sidebarOpen) toggleSidebar(true);
+  if (!silent) {
+    if (window.innerWidth <= 768 && !sidebarOpen) toggleSidebar(true);
+    resetResultsScroll();
+    const paradaTab = document.querySelectorAll('.tab-btn')[0];
+    if (paradaTab) setTab('parada', paradaTab);
+    document.getElementById('parada-input').value = station.name;
+    closeAutocomplete('stop-autocomplete');
+  }
   hideAllPanels();
   currentStationUid = station.uid;
   currentView = { type: 'station', uid: station.uid };
@@ -1006,7 +1020,14 @@ function batteryPillHtml(bike) {
 // ═══════════════════════════════════════════════════════
 function mostrarBici(bike, silent) {
   if (!bike) return;
-  if (!silent && window.innerWidth <= 768 && !sidebarOpen) toggleSidebar(true);
+  if (!silent) {
+    if (window.innerWidth <= 768 && !sidebarOpen) toggleSidebar(true);
+    resetResultsScroll();
+    const biciTab = document.querySelectorAll('.tab-btn')[1];
+    if (biciTab) setTab('bici', biciTab);
+    document.getElementById('bici-input').value = bike.number;
+    closeAutocomplete('bike-autocomplete');
+  }
   hideAllPanels();
   currentView = { type: 'bike', number: bike.number };
   const panel = document.getElementById('bike-detail');
@@ -1047,7 +1068,10 @@ function mostrarBici(bike, silent) {
 // RENDER — LISTAS (varios resultados / modelo)
 // ═══════════════════════════════════════════════════════
 function mostrarListaParadas(list, titulo, silent) {
-  if (!silent && window.innerWidth <= 768 && !sidebarOpen) toggleSidebar(true);
+  if (!silent) {
+    if (window.innerWidth <= 768 && !sidebarOpen) toggleSidebar(true);
+    resetResultsScroll();
+  }
   hideAllPanels();
   const el = document.getElementById('generic-list');
   el.innerHTML = `<div class="panel-heading"><span>${escapeHtml(titulo || ('Paradas encontradas (' + list.length + ')'))}</span></div>` +
@@ -1062,7 +1086,10 @@ function mostrarListaParadas(list, titulo, silent) {
   el.style.display = 'block';
 }
 function mostrarListaBicis(list, titulo, silent) {
-  if (!silent && window.innerWidth <= 768 && !sidebarOpen) toggleSidebar(true);
+  if (!silent) {
+    if (window.innerWidth <= 768 && !sidebarOpen) toggleSidebar(true);
+    resetResultsScroll();
+  }
   hideAllPanels();
   const el = document.getElementById('generic-list');
   el.innerHTML = `<div class="panel-heading"><span>${escapeHtml(titulo || ('Bicicletas encontradas (' + list.length + ')'))}</span></div>` +
