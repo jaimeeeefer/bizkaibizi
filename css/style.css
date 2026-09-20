@@ -188,6 +188,16 @@ body {
 }
 .clear-btn:hover  { background: var(--accent); transform: translateY(-50%) scale(1.15); }
 .clear-btn:active { transform: translateY(-50%) scale(0.9); }
+
+.swap-btn {
+  position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
+  background: var(--surface2); border: 1.5px solid var(--border);
+  border-radius: 50%; width: 32px; height: 32px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.1rem; color: var(--ink); z-index: 10;
+  transition: all 0.2s;
+}
+.swap-btn:hover { background: var(--border); }
 .search-input-row input { padding-right: 2rem; }
 
 .search-btn {

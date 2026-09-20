@@ -94,11 +94,16 @@
 
       <!-- Tab: Ruta -->
       <div class="search-input-wrap" id="wrap-ruta">
-        <div class="search-input-row">
-          <input list="stations-list" id="ruta-origen" class="route-select" placeholder="Selecciona origen..." autocomplete="off">
-        </div>
-        <div class="search-input-row" style="margin-top: 8px;">
-          <input list="stations-list" id="ruta-destino" class="route-select" placeholder="Selecciona destino..." autocomplete="off">
+        <div style="position: relative;">
+          <div class="search-input-row" style="position:relative">
+            <span class="search-icon">🟢</span>
+            <input list="stations-list" id="ruta-origen" class="route-select" placeholder="Selecciona origen..." autocomplete="off" style="padding-right: 40px;">
+          </div>
+          <div class="search-input-row" style="position:relative; margin-top: 8px;">
+            <span class="search-icon">🔴</span>
+            <input list="stations-list" id="ruta-destino" class="route-select" placeholder="Selecciona destino..." autocomplete="off" style="padding-right: 40px;">
+          </div>
+          <button class="swap-btn" onclick="invertirRuta()" title="Invertir">⇅</button>
         </div>
         <datalist id="stations-list"></datalist>
         <button class="search-btn" onclick="calcularRuta()" style="margin-top: 8px;">Calcular ruta bici</button>
@@ -443,6 +448,30 @@ function renderRouteOptions() {
   datalist.innerHTML = sorted.map(s => `<option value="${s.name}"></option>`).join('');
 }
 
+function getSignIcon(sign) {
+  switch(sign) {
+    case -3: return '↖️'; // sharp left
+    case -2: return '⬅️'; // left
+    case -1: return '↖️'; // slight left
+    case 0:  return '⬆️'; // continue
+    case 1:  return '↗️'; // slight right
+    case 2:  return '➡️'; // right
+    case 3:  return '↗️'; // sharp right
+    case 4:  return '🏁'; // finish
+    case 5:  return '📍'; // via reached
+    case 6:  return '🔄'; // roundabout
+    default: return '⬆️';
+  }
+}
+
+function invertirRuta() {
+  const o = document.getElementById('ruta-origen');
+  const d = document.getElementById('ruta-destino');
+  const temp = o.value;
+  o.value = d.value;
+  d.value = temp;
+}
+
 async function calcularRuta() {
   const nameO = document.getElementById('ruta-origen').value.trim();
   const nameD = document.getElementById('ruta-destino').value.trim();
@@ -501,6 +530,19 @@ async function calcularRuta() {
     
     map.fitBounds(routingLayer.getBounds(), { padding: [50, 50] });
     
+    const stepsHtml = instructions.map(step => {
+      const dist = step.distance > 1000 ? (step.distance / 1000).toFixed(1) + ' km' : Math.round(step.distance) + ' m';
+      return `
+        <div style="display: flex; gap: 10px; margin-top: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--border);">
+          <div style="font-size: 1.1rem; width: 24px; text-align: center;">${getSignIcon(step.sign)}</div>
+          <div style="flex: 1;">
+            <div style="font-size: 0.9rem; color: var(--ink); line-height: 1.3;">${step.text}</div>
+            <div style="font-size: 0.75rem; color: var(--ink-soft); margin-top: 2px;">${dist}</div>
+          </div>
+        </div>
+      `;
+    }).join('');
+    
     panel.innerHTML = `
       <div class="panel-heading"><span>Ruta ciclista</span></div>
       <div style="padding: 15px; font-family: 'Nunito', sans-serif;">
@@ -510,7 +552,13 @@ async function calcularRuta() {
            <div class="station-stat"><span class="num" style="color: var(--accent) !important;">${distanceKm}</span><span class="lbl" style="color: var(--ink-soft) !important;">km</span></div>
            <div class="station-stat"><span class="num" style="color: var(--accent) !important;">${durationMin}</span><span class="lbl" style="color: var(--ink-soft) !important;">min</span></div>
         </div>
-        ${instructions.length ? `<div style="margin-top:15px; font-size:0.85rem; color:var(--ink-soft);">* Indicaciones listas en código para futura UI</div>` : ''}
+        
+        ${stepsHtml ? `
+        <div style="margin-top: 25px;">
+          <h4 style="font-size: 0.9rem; color: var(--ink-soft); text-transform: uppercase; margin-bottom: 5px;">Indicaciones</h4>
+          ${stepsHtml}
+        </div>` : ''}
+        
         <button class="search-btn" style="margin-top: 20px; background: var(--ink);" onclick="limpiarRuta()">Limpiar mapa</button>
       </div>
     `;
