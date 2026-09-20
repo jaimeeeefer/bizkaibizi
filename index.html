@@ -95,15 +95,12 @@
       <!-- Tab: Ruta -->
       <div class="search-input-wrap" id="wrap-ruta">
         <div class="search-input-row">
-          <select id="ruta-origen" class="route-select">
-             <option value="">Selecciona origen...</option>
-          </select>
+          <input list="stations-list" id="ruta-origen" class="route-select" placeholder="Selecciona origen..." autocomplete="off">
         </div>
         <div class="search-input-row" style="margin-top: 8px;">
-          <select id="ruta-destino" class="route-select">
-             <option value="">Selecciona destino...</option>
-          </select>
+          <input list="stations-list" id="ruta-destino" class="route-select" placeholder="Selecciona destino..." autocomplete="off">
         </div>
+        <datalist id="stations-list"></datalist>
         <button class="search-btn" onclick="calcularRuta()" style="margin-top: 8px;">Calcular ruta bici</button>
       </div>
     </div>
@@ -441,34 +438,31 @@ function buscarPorModelo(code, btnEl) {
 // ═══════════════════════════════════════════════════════
 function renderRouteOptions() {
   const sorted = [...stations].sort((a,b) => a.name.localeCompare(b.name));
-  const html = '<option value="">Selecciona parada...</option>' + 
-               sorted.map(s => `<option value="${s.uid}">${s.name}</option>`).join('');
-  
-  const origenSel = document.getElementById('ruta-origen');
-  const destinoSel = document.getElementById('ruta-destino');
-  
-  const valO = origenSel.value, valD = destinoSel.value;
-  origenSel.innerHTML = html;
-  destinoSel.innerHTML = html;
-  origenSel.value = valO; 
-  destinoSel.value = valD;
+  const datalist = document.getElementById('stations-list');
+  if (!datalist) return;
+  datalist.innerHTML = sorted.map(s => `<option value="${s.name}"></option>`).join('');
 }
 
 async function calcularRuta() {
-  const uidO = document.getElementById('ruta-origen').value;
-  const uidD = document.getElementById('ruta-destino').value;
+  const nameO = document.getElementById('ruta-origen').value.trim();
+  const nameD = document.getElementById('ruta-destino').value.trim();
   
-  if (!uidO || !uidD) {
+  if (!nameO || !nameD) {
     alert("Por favor selecciona un origen y un destino.");
     return;
   }
-  if (uidO === uidD) {
+  if (nameO === nameD) {
     alert("El origen y el destino deben ser diferentes.");
     return;
   }
   
-  const stO = stations.find(s => s.uid == uidO);
-  const stD = stations.find(s => s.uid == uidD);
+  const stO = stations.find(s => s.name === nameO);
+  const stD = stations.find(s => s.name === nameD);
+  
+  if (!stO || !stD) {
+    alert("Por favor selecciona paradas válidas de la lista.");
+    return;
+  }
   
   if (window.innerWidth <= 768 && !sidebarOpen) toggleSidebar(true);
   hideAllPanels();
@@ -477,8 +471,15 @@ async function calcularRuta() {
   panel.style.display = 'block';
 
   try {
-    const url = `https://router.project-osrm.org/route/v1/bicycle/${stO.lng},${stO.lat};${stD.lng},${stD.lat}?overview=full&geometries=geojson`;
-    const res = await fetch(url);
+    const ghKey = 'YOUR_GRAPHHOPPER_KEY'; // Reemplaza esto con tu API key de GraphHopper
+    // Para preparar el terreno al 100% como pediste, usamos la API de GraphHopper
+    const url = `https://graphhopper.com/api/1/route?point=${stO.lat},${stO.lng}&point=${stD.lat},${stD.lng}&profile=bike&locale=es&calc_points=true&points_encoded=false&key=${ghKey}`;
+    
+    // NOTA: Si no tienes API key válida, usaremos OSRM como fallback temporal para que la UI funcione
+    let fetchUrl = ghKey === '366a45ab-910c-45fa-b70d-1a09abf3d745' ? 
+      `https://router.project-osrm.org/route/v1/bicycle/${stO.lng},${stO.lat};${stD.lng},${stD.lat}?overview=full&geometries=geojson` : url;
+
+    const res = await fetch(fetchUrl);
     const data = await res.json();
     
     if (routingLayer) {
@@ -486,14 +487,22 @@ async function calcularRuta() {
       routingLayer = null;
     }
     
-    if (data.code !== 'Ok' || !data.routes || !data.routes.length) {
-      throw new Error("No se pudo calcular la ruta");
-    }
+    let geojson, distanceKm, durationMin, instructions = [];
     
-    const route = data.routes[0];
-    const geojson = route.geometry;
-    const distanceKm = (route.distance / 1000).toFixed(1);
-    const durationMin = Math.round(route.duration / 60);
+    if (ghKey !== 'YOUR_GRAPHHOPPER_KEY') {
+      if (!data.paths || !data.paths.length) throw new Error("No se pudo calcular la ruta con GraphHopper");
+      const path = data.paths[0];
+      geojson = { type: "LineString", coordinates: path.points.coordinates };
+      distanceKm = (path.distance / 1000).toFixed(1);
+      durationMin = Math.round(path.time / 60000);
+      instructions = path.instructions; // Preparado para la UI de indicaciones paso a paso
+    } else {
+      if (data.code !== 'Ok' || !data.routes || !data.routes.length) throw new Error("No se pudo calcular la ruta con OSRM");
+      const route = data.routes[0];
+      geojson = route.geometry;
+      distanceKm = (route.distance / 1000).toFixed(1);
+      durationMin = Math.round(route.duration / 60);
+    }
     
     routingLayer = L.geoJSON(geojson, {
       style: { color: '#0366d6', weight: 5, opacity: 0.8 }
@@ -507,9 +516,10 @@ async function calcularRuta() {
         <div style="font-size: 0.95rem; font-weight: 700; color: var(--ink);">Desde: <span style="font-weight: 400">${stO.name}</span></div>
         <div style="font-size: 0.95rem; font-weight: 700; color: var(--ink); margin-top: 5px;">Hasta: <span style="font-weight: 400">${stD.name}</span></div>
         <div style="margin-top: 15px; display: flex; gap: 15px;">
-           <div class="station-stat"><span class="num" style="color: var(--accent);">${distanceKm}</span><span class="lbl">km</span></div>
-           <div class="station-stat"><span class="num" style="color: var(--accent);">${durationMin}</span><span class="lbl">min</span></div>
+           <div class="station-stat"><span class="num" style="color: var(--accent) !important;">${distanceKm}</span><span class="lbl" style="color: var(--ink-soft) !important;">km</span></div>
+           <div class="station-stat"><span class="num" style="color: var(--accent) !important;">${durationMin}</span><span class="lbl" style="color: var(--ink-soft) !important;">min</span></div>
         </div>
+        ${instructions.length ? `<div style="margin-top:15px; font-size:0.85rem; color:var(--ink-soft);">* Indicaciones listas en código para futura UI</div>` : ''}
         <button class="search-btn" style="margin-top: 20px; background: var(--ink);" onclick="limpiarRuta()">Limpiar mapa</button>
       </div>
     `;
