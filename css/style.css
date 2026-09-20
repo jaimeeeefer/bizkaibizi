@@ -43,6 +43,14 @@
   --route-card-sub:  rgba(232,234,240,.5);
 }
 
+[data-theme="dark"] .leaflet-layer {
+  filter: invert(100%) hue-rotate(180deg) brightness(95%) contrast(90%);
+}
+
+[data-theme="dark"] .bici-pin-count {
+  color: var(--white);
+}
+
 /* ─── RESET & BASE ───────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 

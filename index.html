@@ -31,7 +31,7 @@
   </div>
 
   <div class="topbar-right">
-    <span id="api-last-updated" style="display:none; font-size: 0.85em; margin-right: 8px; white-space: nowrap; font-weight: 500;"></span>
+
     <div id="polling-toggle" title="Actualización automática (siempre activa)">
       <span class="live-dot"></span>
       <span id="polling-label">Actualización automática</span>
@@ -155,7 +155,7 @@ async function cargarDatos() {
     const data = await res.json();
     procesarDatos(data);
     lastApiUpdateDate = new Date();
-    updateApiUpdateUI();
+
   } catch (err) {
     console.error('Error cargando datos de Bizkaibizi', err);
   } finally {
@@ -236,7 +236,7 @@ function makeStationIcon(station) {
   const iconUrl = empty ? ICON_EMPTY : ICON;
   // Las imágenes de origen miden 170x264 px (ratio ≈ 0.644) — mantenemos esa
   // proporción para que el pin no se vea deformado/ensanchado en el mapa.
-  const W = 30, H = Math.round(W * 264 / 170); // 30 x 47
+  const W = 26, H = Math.round(W * 264 / 170); // 26 x 40
   return L.divIcon({
     className: '',
     html: `<div style="position:relative;width:${W}px;height:${H}px;">
@@ -678,18 +678,6 @@ let pollingSeconds = 30;
 let pollingTimer = null, countdownTimer = null;
 let lastApiUpdateDate = null;
 
-function updateApiUpdateUI() {
-  const span = document.getElementById('api-last-updated');
-  if (!span || !lastApiUpdateDate) return;
-  const diffSec = Math.floor((new Date() - lastApiUpdateDate) / 1000);
-  const isMobile = window.innerWidth < 650;
-  const text = diffSec < 5 ? (isMobile ? '🔄 ahora' : 'Actualizado ahora mismo')
-    : (isMobile ? `🔄 ${diffSec}s` : `Última actualización: hace ${diffSec}s`);
-  span.textContent = text;
-  span.style.display = 'inline';
-}
-window.addEventListener('resize', updateApiUpdateUI);
-
 function startPollingCountdown() {
   clearTimeout(pollingTimer); clearInterval(countdownTimer);
   pollingSeconds = 30;
@@ -697,7 +685,6 @@ function startPollingCountdown() {
   countdownTimer = setInterval(() => {
     pollingSeconds--;
     document.getElementById('polling-countdown').textContent = `${pollingSeconds}s`;
-    updateApiUpdateUI();
     if (pollingSeconds <= 0) clearInterval(countdownTimer);
   }, 1000);
   pollingTimer = setTimeout(async () => {
