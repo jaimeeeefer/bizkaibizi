@@ -234,15 +234,18 @@ function initMap() {
 function makeStationIcon(station) {
   const empty = station.bikesAvailable === 0;
   const iconUrl = empty ? ICON_EMPTY : ICON;
+  // Las imágenes de origen miden 170x264 px (ratio ≈ 0.644) — mantenemos esa
+  // proporción para que el pin no se vea deformado/ensanchado en el mapa.
+  const W = 30, H = Math.round(W * 264 / 170); // 30 x 47
   return L.divIcon({
     className: '',
-    html: `<div style="position:relative;width:30px;height:40px;">
-             <img class="bici-pin-icon" src="${iconUrl}" style="width:30px;height:40px;">
+    html: `<div style="position:relative;width:${W}px;height:${H}px;">
+             <img class="bici-pin-icon" src="${iconUrl}" style="width:${W}px;height:${H}px;">
              <span class="bici-pin-count ${empty ? 'empty' : ''}">${station.bikesAvailable}</span>
            </div>`,
-    iconSize: [30, 40],
-    iconAnchor: [15, 40],
-    popupAnchor: [0, -36]
+    iconSize: [W, H],
+    iconAnchor: [W / 2, H],
+    popupAnchor: [0, -H + 4]
   });
 }
 
@@ -309,14 +312,33 @@ function onParadaInput() {
   const q = document.getElementById('parada-input').value.trim().toLowerCase();
   const box = document.getElementById('stop-autocomplete');
   if (!q) { closeAutocomplete('stop-autocomplete'); return; }
+
+  const cities = [...new Set(stations.map(s => s.city))].filter(c => c.toLowerCase().includes(q));
   const matches = stations.filter(s =>
     s.name.toLowerCase().includes(q) || String(s.number).includes(q)
-  ).slice(0, 12);
-  if (!matches.length) { closeAutocomplete('stop-autocomplete'); return; }
-  box.innerHTML = matches.map(s =>
+  ).slice(0, 10);
+
+  if (!matches.length && !cities.length) { closeAutocomplete('stop-autocomplete'); return; }
+
+  let html = '';
+  cities.forEach(city => {
+    const count = stations.filter(s => s.city === city).length;
+    html += `<div class="autocomplete-item" onmousedown="seleccionarMunicipio('${escapeHtml(city)}')"><b>📍 Ver todas — ${escapeHtml(city)}</b> <span>${count} paradas</span></div>`;
+  });
+  html += matches.map(s =>
     `<div class="autocomplete-item" onmousedown="seleccionarParada(${s.uid})">${escapeHtml(s.name)} <span>${escapeHtml(s.city)} · nº${s.number}</span></div>`
   ).join('');
+  box.innerHTML = html;
   box.style.display = 'block';
+}
+function seleccionarMunicipio(city) {
+  document.getElementById('parada-input').value = city;
+  closeAutocomplete('stop-autocomplete');
+  mostrarParadasCiudad(city);
+}
+function mostrarParadasCiudad(city) {
+  const matches = stations.filter(s => s.city === city);
+  mostrarListaParadas(matches, `Paradas en ${city} (${matches.length})`);
 }
 function seleccionarParada(uid) {
   const station = stations.find(s => s.uid === uid);
@@ -330,9 +352,16 @@ function buscarParada() {
   const matches = stations.filter(s =>
     s.name.toLowerCase().includes(q) || String(s.number).includes(q)
   );
-  if (matches.length === 1) { mostrarEstacion(matches[0], true); }
-  else if (matches.length > 1) { mostrarListaParadas(matches); }
-  else { mostrarSinResultados('No se ha encontrado ninguna parada con ese nombre o número.'); }
+  if (matches.length === 1) { mostrarEstacion(matches[0], true); return; }
+  if (matches.length > 1) {
+    const cityExact = stations.find(s => s.city.toLowerCase() === q);
+    if (cityExact) { mostrarParadasCiudad(cityExact.city); return; }
+    mostrarListaParadas(matches);
+    return;
+  }
+  const cityStations = stations.filter(s => s.city.toLowerCase().includes(q));
+  if (cityStations.length) { mostrarParadasCiudad(cityStations[0].city); return; }
+  mostrarSinResultados('No se ha encontrado ninguna parada ni municipio con ese nombre.');
 }
 
 // ═══════════════════════════════════════════════════════
