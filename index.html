@@ -1,0 +1,702 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>Bizkaibizi · Tiempo Real</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="icon" type="image/png" href="/img/bici-pin.png">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=Nunito:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,300;1,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <script>
+    // Aplica el modo oscuro antes de pintar para evitar parpadeos
+    if (localStorage.getItem('bb_theme') === 'dark') {
+      document.documentElement.setAttribute('data-theme', 'dark');
+    }
+  </script>
+</head>
+<body>
+
+<!-- ══════ TOPBAR ══════ -->
+<div id="topbar">
+  <a class="topbar-logo" href="#">
+    <div class="topbar-logo-dot"><img src="/img/bici-pin.png" alt="Bizkaibizi"></div>
+    <span class="topbar-title">Bizkaibizi</span>
+  </a>
+  <div class="topbar-sep"></div>
+  <div id="loading-badge" class="visible">
+    <div class="spinner"></div>
+    <span id="loading-msg">Cargando datos…</span>
+  </div>
+
+  <div class="topbar-right">
+    <span id="api-last-updated" style="display:none; font-size: 0.85em; margin-right: 8px; white-space: nowrap; font-weight: 500;"></span>
+    <label id="polling-toggle" title="Actualización automática">
+      <div class="toggle-pill on" id="poll-pill"></div>
+      <span id="polling-label">Actualización automática</span>
+      <span id="polling-countdown">30s</span>
+      <input type="checkbox" checked style="display:none" id="poll-check" onchange="togglePolling()">
+    </label>
+    <div class="topbar-sep"></div>
+    <button class="btn-icon" id="theme-toggle" onclick="toggleTheme()" title="Modo día/noche">🌙</button>
+    <button class="btn-icon" id="mobile-toggle" onclick="toggleSidebar()" title="Menú">☰</button>
+  </div>
+</div>
+
+<!-- ══════ SHARE TOAST ══════ -->
+<div id="share-toast">✓ Enlace copiado al portapapeles</div>
+
+<!-- ══════ LAYOUT ══════ -->
+<div id="layout">
+
+  <!-- ── SIDEBAR ── -->
+  <div id="sidebar">
+
+    <!-- Search -->
+    <div id="search-section">
+      <div class="search-tabs">
+        <button class="tab-btn active" onclick="setTab('parada',this)">🅿️ Parada</button>
+        <button class="tab-btn" onclick="setTab('bici',this)">🔢 Bici nº</button>
+        <button class="tab-btn" onclick="setTab('modelo',this)">🔋 Modelo</button>
+      </div>
+
+      <!-- Tab: Parada -->
+      <div class="search-input-wrap active" id="wrap-parada">
+        <div class="search-input-row" style="position:relative">
+          <span class="search-icon">🔍</span>
+          <input type="text" id="parada-input" placeholder="Nombre o nº de parada…"
+                 oninput="onParadaInput();toggleClear('clear-parada',this.value)"
+                 onblur="setTimeout(()=>closeAutocomplete('stop-autocomplete'),200)" />
+          <button class="clear-btn" id="clear-parada" onmousedown="event.preventDefault();clearInput('parada-input','clear-parada');renderEmptyState();" title="Borrar">✕</button>
+          <div id="stop-autocomplete"></div>
+        </div>
+        <button class="search-btn" onclick="buscarParada()">Ver parada</button>
+      </div>
+
+      <!-- Tab: Bici nº -->
+      <div class="search-input-wrap" id="wrap-bici">
+        <div class="search-input-row" style="position:relative">
+          <span class="search-icon">🚲</span>
+          <input type="text" id="bici-input" placeholder="Número de bicicleta…"
+                 oninput="onBiciInput();toggleClear('clear-bici',this.value)"
+                 onblur="setTimeout(()=>closeAutocomplete('bike-autocomplete'),200)" />
+          <button class="clear-btn" id="clear-bici" onmousedown="event.preventDefault();clearInput('bici-input','clear-bici');renderEmptyState();" title="Borrar">✕</button>
+          <div id="bike-autocomplete"></div>
+        </div>
+        <button class="search-btn" onclick="buscarBici()">Localizar bici</button>
+      </div>
+
+      <!-- Tab: Modelo -->
+      <div class="search-input-wrap" id="wrap-modelo">
+        <div id="model-chip-list"></div>
+      </div>
+    </div>
+
+    <!-- Results -->
+    <div id="results-panel">
+      <div class="empty-state" id="empty-state">
+        <span class="big">🚲</span>
+        Busca una parada, un número de bicicleta o un modelo para ver la disponibilidad en tiempo real de Bizkaibizi.
+      </div>
+
+      <!-- Station detail -->
+      <div id="station-detail" style="display:none"></div>
+
+      <!-- Bike detail -->
+      <div id="bike-detail" style="display:none"></div>
+
+      <!-- Generic list (búsquedas con varios resultados / modelo) -->
+      <div id="generic-list" style="display:none"></div>
+    </div>
+
+    <!-- Favorites -->
+    <div id="favs-section">
+      <div class="favs-header" onclick="toggleFavs()">
+        <span class="favs-header-title">⭐ Paradas favoritas</span>
+        <span class="favs-toggle-arrow" id="favs-arrow">▾</span>
+      </div>
+      <div id="favs-list">
+        <div id="no-data-msg">Aún no tienes paradas favoritas.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── MAP ── -->
+  <div id="map-container">
+    <div id="map"></div>
+    <div class="map-legend">
+      <span><span class="map-legend-dot" style="background:#111318"></span>Con bicis</span>
+      <span><span class="map-legend-dot" style="background:#9AA0AC"></span>Vacía</span>
+    </div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<script>
+// ═══════════════════════════════════════════════════════
+// ESTADO GLOBAL
+// ═══════════════════════════════════════════════════════
+let stations = [];       // { uid, number, name, city, lat, lng, bikes, bikesAvailable, freeRacks, bikeRacks, bikeList }
+let allBikes = [];       // { number, bikeType, battery, range, lockTypes, state, station }
+let bikeTypeCounts = {}; // { "143": 120, "420": 5, ... }
+let markersLayer = null;
+let markerByUid = {};
+let map = null;
+const ICON = '/img/bici-pin.png';
+
+// ═══════════════════════════════════════════════════════
+// CARGA DE DATOS
+// ═══════════════════════════════════════════════════════
+async function cargarDatos() {
+  document.getElementById('loading-badge').classList.add('visible');
+  try {
+    const res = await fetch('/bizkaibizi');
+    const data = await res.json();
+    procesarDatos(data);
+    lastApiUpdateDate = new Date();
+    updateApiUpdateUI();
+  } catch (err) {
+    console.error('Error cargando datos de Bizkaibizi', err);
+  } finally {
+    document.getElementById('loading-badge').classList.remove('visible');
+  }
+}
+
+function procesarDatos(data) {
+  const newStations = [];
+  const newBikes = [];
+  const newTypeCounts = {};
+
+  const country = data.countries && data.countries[0];
+  if (!country) return;
+
+  country.cities.forEach(city => {
+    (city.places || []).forEach(place => {
+      const station = {
+        uid: place.uid,
+        number: place.number,
+        name: cleanName(place.name),
+        city: city.name,
+        lat: place.lat,
+        lng: place.lng,
+        bikes: place.bikes || 0,
+        bikesAvailable: place.bikes_available_to_rent ?? place.bikes ?? 0,
+        freeRacks: place.free_racks ?? null,
+        bikeRacks: place.bike_racks ?? null,
+        bikeList: []
+      };
+
+      (place.bike_list || []).forEach(b => {
+        const bike = {
+          number: b.number,
+          bikeType: String(b.bike_type),
+          battery: b.pedelec_battery ?? (b.battery_pack ? b.battery_pack.percentage : null),
+          range: b.battery_pack ? b.battery_pack.estimated_range_km : null,
+          lockTypes: b.lock_types || [],
+          state: b.state,
+          station
+        };
+        station.bikeList.push(bike);
+        newBikes.push(bike);
+        newTypeCounts[bike.bikeType] = (newTypeCounts[bike.bikeType] || 0) + 1;
+      });
+
+      newStations.push(station);
+    });
+  });
+
+  stations = newStations;
+  allBikes = newBikes;
+  bikeTypeCounts = newTypeCounts;
+
+  renderMapMarkers();
+  renderModelChips();
+  refreshOpenPanels();
+}
+
+function cleanName(name) {
+  return (name || '').replace(/^-+\s*/, '').trim();
+}
+
+// ═══════════════════════════════════════════════════════
+// MAPA
+// ═══════════════════════════════════════════════════════
+function initMap() {
+  map = L.map('map', { zoomControl: true }).setView([43.293, -2.9816], 12);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '&copy; OpenStreetMap contributors'
+  }).addTo(map);
+  markersLayer = L.layerGroup().addTo(map);
+}
+
+function makeStationIcon(station) {
+  const empty = station.bikesAvailable === 0;
+  return L.divIcon({
+    className: '',
+    html: `<div style="position:relative;width:30px;height:40px;">
+             <img class="bici-pin-icon" src="${ICON}" style="width:30px;height:40px;">
+             <span class="bici-pin-count ${empty ? 'empty' : ''}">${station.bikesAvailable}</span>
+           </div>`,
+    iconSize: [30, 40],
+    iconAnchor: [15, 40],
+    popupAnchor: [0, -36]
+  });
+}
+
+function renderMapMarkers() {
+  markersLayer.clearLayers();
+  markerByUid = {};
+  stations.forEach(station => {
+    if (station.lat == null || station.lng == null) return;
+    const marker = L.marker([station.lat, station.lng], { icon: makeStationIcon(station) });
+    marker.bindPopup(popupHtml(station));
+    marker.on('click', () => mostrarEstacion(station, false));
+    marker.addTo(markersLayer);
+    markerByUid[station.uid] = marker;
+  });
+}
+
+function popupHtml(station) {
+  return `<b>${escapeHtml(station.name)}</b><br>${escapeHtml(station.city)}
+          <br>🚲 ${station.bikesAvailable} disponibles · 🅿️ ${station.freeRacks ?? '?'} anclajes libres
+          <br><span style="color:var(--accent);cursor:pointer" onclick="mostrarEstacion(stations.find(s=>s.uid===${station.uid}), true)">Ver detalle →</span>`;
+}
+
+function focusStation(station) {
+  if (!map) return;
+  map.setView([station.lat, station.lng], 16, { animate: true });
+  const marker = markerByUid[station.uid];
+  if (marker) marker.openPopup();
+}
+
+// ═══════════════════════════════════════════════════════
+// TABS
+// ═══════════════════════════════════════════════════════
+function setTab(tab, btn) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  document.querySelectorAll('.search-input-wrap').forEach(w => w.classList.remove('active'));
+  document.getElementById('wrap-' + tab).classList.add('active');
+}
+
+// ═══════════════════════════════════════════════════════
+// UTILIDADES DE INPUT
+// ═══════════════════════════════════════════════════════
+function toggleClear(id, value) {
+  document.getElementById(id).style.display = value ? 'flex' : 'none';
+}
+function clearInput(inputId, clearId) {
+  document.getElementById(inputId).value = '';
+  toggleClear(clearId, '');
+  closeAutocomplete('stop-autocomplete');
+  closeAutocomplete('bike-autocomplete');
+}
+function closeAutocomplete(id) {
+  const el = document.getElementById(id);
+  if (el) { el.style.display = 'none'; el.innerHTML = ''; }
+}
+function escapeHtml(str) {
+  return String(str ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+}
+
+// ═══════════════════════════════════════════════════════
+// AUTOCOMPLETE — PARADA
+// ═══════════════════════════════════════════════════════
+function onParadaInput() {
+  const q = document.getElementById('parada-input').value.trim().toLowerCase();
+  const box = document.getElementById('stop-autocomplete');
+  if (!q) { closeAutocomplete('stop-autocomplete'); return; }
+  const matches = stations.filter(s =>
+    s.name.toLowerCase().includes(q) || String(s.number).includes(q)
+  ).slice(0, 12);
+  if (!matches.length) { closeAutocomplete('stop-autocomplete'); return; }
+  box.innerHTML = matches.map(s =>
+    `<div class="autocomplete-item" onmousedown="seleccionarParada(${s.uid})">${escapeHtml(s.name)} <span>${escapeHtml(s.city)} · nº${s.number}</span></div>`
+  ).join('');
+  box.style.display = 'block';
+}
+function seleccionarParada(uid) {
+  const station = stations.find(s => s.uid === uid);
+  document.getElementById('parada-input').value = station.name;
+  closeAutocomplete('stop-autocomplete');
+  mostrarEstacion(station, true);
+}
+function buscarParada() {
+  const q = document.getElementById('parada-input').value.trim().toLowerCase();
+  if (!q) return;
+  const matches = stations.filter(s =>
+    s.name.toLowerCase().includes(q) || String(s.number).includes(q)
+  );
+  if (matches.length === 1) { mostrarEstacion(matches[0], true); }
+  else if (matches.length > 1) { mostrarListaParadas(matches); }
+  else { mostrarSinResultados('No se ha encontrado ninguna parada con ese nombre o número.'); }
+}
+
+// ═══════════════════════════════════════════════════════
+// AUTOCOMPLETE — BICI
+// ═══════════════════════════════════════════════════════
+function onBiciInput() {
+  const q = document.getElementById('bici-input').value.trim();
+  const box = document.getElementById('bike-autocomplete');
+  if (!q) { closeAutocomplete('bike-autocomplete'); return; }
+  const matches = allBikes.filter(b => b.number.includes(q)).slice(0, 12);
+  if (!matches.length) { closeAutocomplete('bike-autocomplete'); return; }
+  box.innerHTML = matches.map(b =>
+    `<div class="autocomplete-item" onmousedown="seleccionarBici('${b.number}')">Bici nº${b.number} <span>${escapeHtml(b.station.name)}</span></div>`
+  ).join('');
+  box.style.display = 'block';
+}
+function seleccionarBici(number) {
+  document.getElementById('bici-input').value = number;
+  closeAutocomplete('bike-autocomplete');
+  const bike = allBikes.find(b => b.number === number);
+  if (bike) mostrarBici(bike);
+}
+function buscarBici() {
+  const q = document.getElementById('bici-input').value.trim();
+  if (!q) return;
+  const exact = allBikes.find(b => b.number === q);
+  if (exact) { mostrarBici(exact); return; }
+  const matches = allBikes.filter(b => b.number.includes(q));
+  if (matches.length === 1) mostrarBici(matches[0]);
+  else if (matches.length > 1) mostrarListaBicis(matches);
+  else mostrarSinResultados('No se ha encontrado ninguna bicicleta con ese número.');
+}
+
+// ═══════════════════════════════════════════════════════
+// MODELOS
+// ═══════════════════════════════════════════════════════
+function renderModelChips() {
+  const box = document.getElementById('model-chip-list');
+  const codes = Object.keys(bikeTypeCounts).sort((a, b) => bikeTypeCounts[b] - bikeTypeCounts[a]);
+  box.innerHTML = codes.map(code =>
+    `<button class="model-chip" onclick="buscarPorModelo('${code}', this)">Modelo ${code} <span style="opacity:.7">(${bikeTypeCounts[code]})</span></button>`
+  ).join('');
+}
+function buscarPorModelo(code, btnEl) {
+  document.querySelectorAll('.model-chip').forEach(c => c.classList.remove('active'));
+  if (btnEl) btnEl.classList.add('active');
+  const matches = allBikes.filter(b => b.bikeType === code);
+  mostrarListaBicis(matches, `Bicicletas modelo ${code} (${matches.length})`);
+}
+
+// ═══════════════════════════════════════════════════════
+// RENDER — ESTADO VACÍO / SIN RESULTADOS
+// ═══════════════════════════════════════════════════════
+function hideAllPanels() {
+  ['empty-state', 'station-detail', 'bike-detail', 'generic-list'].forEach(id => {
+    document.getElementById(id).style.display = 'none';
+  });
+}
+function renderEmptyState() {
+  hideAllPanels();
+  document.getElementById('empty-state').style.display = 'block';
+}
+function mostrarSinResultados(msg) {
+  hideAllPanels();
+  const el = document.getElementById('generic-list');
+  el.innerHTML = `<div class="empty-state"><span class="big">🔍</span>${escapeHtml(msg)}</div>`;
+  el.style.display = 'block';
+}
+
+// ═══════════════════════════════════════════════════════
+// RENDER — DETALLE DE PARADA
+// ═══════════════════════════════════════════════════════
+let currentStationUid = null;
+function mostrarEstacion(station, moverMapa) {
+  if (!station) return;
+  hideAllPanels();
+  currentStationUid = station.uid;
+  const panel = document.getElementById('station-detail');
+
+  const isFav = getFavs().some(f => f.uid === station.uid);
+  panel.innerHTML = `
+    <div class="panel-heading">
+      <span>Detalle de parada</span>
+      <div class="panel-heading-actions">
+        <button class="btn-panel-action share-btn" style="display:inline-flex" onclick="compartirParada(${station.uid})" title="Compartir">🔗</button>
+        <button class="btn-panel-action ${isFav ? 'saved' : ''}" style="display:inline-flex" id="btn-fav-station" onclick="toggleFavParada(${station.uid})">
+          ${isFav ? '★ Guardada' : '☆ Guardar'}
+        </button>
+      </div>
+    </div>
+    <div class="station-header">
+      <div class="station-name">${escapeHtml(station.name)}</div>
+      <div class="station-sub">${escapeHtml(station.city)} · nº parada ${station.number}</div>
+      <div class="station-stats">
+        <div class="station-stat"><span class="num">${station.bikesAvailable}</span><span class="lbl">Bicis</span></div>
+        <div class="station-stat"><span class="num">${station.freeRacks ?? '—'}</span><span class="lbl">Anclajes libres</span></div>
+        <div class="station-stat"><span class="num">${station.bikeRacks ?? '—'}</span><span class="lbl">Capacidad</span></div>
+      </div>
+    </div>
+    <div id="station-bike-list"></div>
+  `;
+  const listEl = panel.querySelector('#station-bike-list');
+  if (!station.bikeList.length) {
+    listEl.innerHTML = `<div class="empty-state" style="padding:20px 0"><span class="big">🅿️</span>No hay bicicletas disponibles ahora mismo en esta parada.</div>`;
+  } else {
+    listEl.innerHTML = station.bikeList.map(bikeCardHtml).join('');
+  }
+  panel.style.display = 'block';
+  if (moverMapa) focusStation(station);
+}
+
+function bikeCardHtml(bike) {
+  return `<div class="bike-card" onclick="mostrarBici(allBikes.find(b=>b.number==='${bike.number}'))">
+      <div class="bike-card-top">
+        <span class="bike-badge">nº ${bike.number}</span>
+        <span class="bike-card-loc">Modelo ${bike.bikeType}</span>
+      </div>
+      <div class="bike-card-bottom">
+        ${batteryPillHtml(bike)}
+        ${bike.range != null ? `<span class="chip">🔋 ${bike.range} km autonomía</span>` : ''}
+      </div>
+    </div>`;
+}
+function batteryPillHtml(bike) {
+  if (bike.battery == null) return `<span class="chip">Sin datos de batería</span>`;
+  const cls = bike.battery >= 60 ? 'high' : bike.battery >= 30 ? 'mid' : 'low';
+  return `<span class="battery-pill ${cls}">🔋 ${bike.battery}%</span>`;
+}
+
+// ═══════════════════════════════════════════════════════
+// RENDER — DETALLE DE BICI
+// ═══════════════════════════════════════════════════════
+function mostrarBici(bike) {
+  if (!bike) return;
+  hideAllPanels();
+  const panel = document.getElementById('bike-detail');
+  const station = bike.station;
+  panel.innerHTML = `
+    <div class="panel-heading">
+      <span>Bicicleta nº ${bike.number}</span>
+      <div class="panel-heading-actions">
+        <button class="btn-panel-action share-btn" style="display:inline-flex" onclick="compartirBici('${bike.number}')" title="Compartir">🔗</button>
+      </div>
+    </div>
+    <div class="station-header">
+      <div class="station-name">Bici nº ${bike.number}</div>
+      <div class="station-sub">Modelo ${bike.bikeType} · estado: ${escapeHtml(bike.state || 'desconocido')}</div>
+      <div class="station-stats">
+        <div class="station-stat"><span class="num">${bike.battery != null ? bike.battery + '%' : '—'}</span><span class="lbl">Batería</span></div>
+        <div class="station-stat"><span class="num">${bike.range != null ? bike.range : '—'}</span><span class="lbl">Autonomía (km)</span></div>
+      </div>
+    </div>
+    <div class="station-list-item" onclick="mostrarEstacion(stations.find(s=>s.uid===${station.uid}), true)">
+      <span class="badge">🅿️</span>
+      <div class="station-list-item-info">
+        <div class="main">${escapeHtml(station.name)}</div>
+        <div class="sub">${escapeHtml(station.city)} · ${station.bikesAvailable} bicis disponibles ahora</div>
+      </div>
+    </div>
+  `;
+  panel.style.display = 'block';
+  focusStation(station);
+}
+
+// ═══════════════════════════════════════════════════════
+// RENDER — LISTAS (varios resultados / modelo)
+// ═══════════════════════════════════════════════════════
+function mostrarListaParadas(list) {
+  hideAllPanels();
+  const el = document.getElementById('generic-list');
+  el.innerHTML = `<div class="panel-heading"><span>Paradas encontradas (${list.length})</span></div>` +
+    list.map(s => `
+      <div class="station-list-item" onclick="mostrarEstacion(stations.find(x=>x.uid===${s.uid}), true)">
+        <span class="badge">${s.bikesAvailable}</span>
+        <div class="station-list-item-info">
+          <div class="main">${escapeHtml(s.name)}</div>
+          <div class="sub">${escapeHtml(s.city)} · nº${s.number}</div>
+        </div>
+      </div>`).join('');
+  el.style.display = 'block';
+}
+function mostrarListaBicis(list, titulo) {
+  hideAllPanels();
+  const el = document.getElementById('generic-list');
+  el.innerHTML = `<div class="panel-heading"><span>${escapeHtml(titulo || ('Bicicletas encontradas (' + list.length + ')'))}</span></div>` +
+    (list.length ? list.map(bikeCardHtmlWithStation).join('') :
+      `<div class="empty-state"><span class="big">🚲</span>No hay bicicletas de este tipo circulando ahora mismo.</div>`);
+  el.style.display = 'block';
+}
+function bikeCardHtmlWithStation(bike) {
+  return `<div class="bike-card" onclick="mostrarBici(allBikes.find(b=>b.number==='${bike.number}'))">
+      <div class="bike-card-top">
+        <span class="bike-badge">nº ${bike.number}</span>
+        <span class="bike-card-loc">${escapeHtml(bike.station.name)}</span>
+      </div>
+      <div class="bike-card-bottom">
+        ${batteryPillHtml(bike)}
+        <span class="chip">${escapeHtml(bike.station.city)}</span>
+      </div>
+    </div>`;
+}
+
+// Refresca el panel actualmente abierto tras cada actualización de datos
+function refreshOpenPanels() {
+  if (currentStationUid != null && document.getElementById('station-detail').style.display !== 'none') {
+    const station = stations.find(s => s.uid === currentStationUid);
+    if (station) mostrarEstacion(station, false);
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+// FAVORITOS (paradas)
+// ═══════════════════════════════════════════════════════
+function getFavs() {
+  try { return JSON.parse(localStorage.getItem('bb_favs') || '[]'); } catch { return []; }
+}
+function setFavs(favs) { localStorage.setItem('bb_favs', JSON.stringify(favs)); }
+function toggleFavParada(uid) {
+  const station = stations.find(s => s.uid === uid);
+  if (!station) return;
+  let favs = getFavs();
+  if (favs.some(f => f.uid === uid)) {
+    favs = favs.filter(f => f.uid !== uid);
+  } else {
+    favs.push({ uid: station.uid, name: station.name });
+  }
+  setFavs(favs);
+  updateFavsUI();
+  mostrarEstacion(station, false);
+}
+function updateFavsUI() {
+  const favs = getFavs();
+  const listEl = document.getElementById('favs-list');
+  document.getElementById('no-data-msg').style.display = favs.length ? 'none' : 'block';
+  listEl.querySelectorAll('.fav-item').forEach(el => el.remove());
+  favs.forEach((fav, i) => {
+    const div = document.createElement('div');
+    div.className = 'fav-item';
+    div.innerHTML = `<span class="fav-label">${escapeHtml(fav.name)}</span><button class="fav-del" onclick="event.stopPropagation();removeFav(${i})" title="Eliminar">×</button>`;
+    div.onclick = () => {
+      const station = stations.find(s => s.uid === fav.uid);
+      if (station) mostrarEstacion(station, true);
+    };
+    listEl.appendChild(div);
+  });
+}
+function removeFav(index) {
+  const favs = getFavs();
+  favs.splice(index, 1);
+  setFavs(favs);
+  updateFavsUI();
+}
+function toggleFavs() {
+  document.getElementById('favs-list').classList.toggle('open');
+  document.getElementById('favs-arrow').classList.toggle('open');
+}
+
+// ═══════════════════════════════════════════════════════
+// COMPARTIR
+// ═══════════════════════════════════════════════════════
+function compartirParada(uid) {
+  const url = `${location.origin}${location.pathname}?parada=${uid}`;
+  copiarPortapapeles(url);
+}
+function compartirBici(number) {
+  const url = `${location.origin}${location.pathname}?bici=${number}`;
+  copiarPortapapeles(url);
+}
+function copiarPortapapeles(text) {
+  navigator.clipboard?.writeText(text).then(showShareToast).catch(() => {});
+}
+function showShareToast() {
+  const toast = document.getElementById('share-toast');
+  toast.classList.add('show');
+  setTimeout(() => toast.classList.remove('show'), 2200);
+}
+function handleURLParams() {
+  const params = new URLSearchParams(location.search);
+  const paradaUid = params.get('parada');
+  const bici = params.get('bici');
+  if (paradaUid) {
+    const station = stations.find(s => String(s.uid) === paradaUid);
+    if (station) { setTab('parada', document.querySelector('.tab-btn')); mostrarEstacion(station, true); }
+  } else if (bici) {
+    const bike = allBikes.find(b => b.number === bici);
+    if (bike) {
+      document.querySelectorAll('.tab-btn')[1].click();
+      mostrarBici(bike);
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+// TEMA / SIDEBAR MÓVIL
+// ═══════════════════════════════════════════════════════
+function toggleTheme() {
+  const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+  if (isDark) { document.documentElement.removeAttribute('data-theme'); localStorage.setItem('bb_theme', 'light'); }
+  else { document.documentElement.setAttribute('data-theme', 'dark'); localStorage.setItem('bb_theme', 'dark'); }
+}
+let sidebarOpen = true;
+function toggleSidebar() {
+  sidebarOpen = !sidebarOpen;
+  document.getElementById('sidebar').style.display = sidebarOpen ? 'flex' : 'none';
+  setTimeout(() => map.invalidateSize(), 50);
+}
+
+// ═══════════════════════════════════════════════════════
+// ACTUALIZACIÓN / POLLING
+// ═══════════════════════════════════════════════════════
+let pollingActive = true, pollingSeconds = 30;
+let pollingTimer = null, countdownTimer = null;
+let lastApiUpdateDate = null;
+
+function updateApiUpdateUI() {
+  const span = document.getElementById('api-last-updated');
+  if (!span || !lastApiUpdateDate) return;
+  const diffSec = Math.floor((new Date() - lastApiUpdateDate) / 1000);
+  const isMobile = window.innerWidth < 650;
+  const text = diffSec < 5 ? (isMobile ? '🔄 ahora' : 'Actualizado ahora mismo')
+    : (isMobile ? `🔄 ${diffSec}s` : `Última actualización: hace ${diffSec}s`);
+  span.textContent = text;
+  span.style.display = 'inline';
+}
+window.addEventListener('resize', updateApiUpdateUI);
+
+function togglePolling() {
+  pollingActive = document.getElementById('poll-check').checked;
+  document.getElementById('poll-pill').classList.toggle('on', pollingActive);
+  if (pollingActive) startPollingCountdown();
+  else {
+    clearTimeout(pollingTimer); clearInterval(countdownTimer);
+    document.getElementById('polling-countdown').textContent = '—';
+  }
+}
+function startPollingCountdown() {
+  clearTimeout(pollingTimer); clearInterval(countdownTimer);
+  if (!pollingActive) return;
+  pollingSeconds = 30;
+  document.getElementById('polling-countdown').textContent = `${pollingSeconds}s`;
+  countdownTimer = setInterval(() => {
+    pollingSeconds--;
+    document.getElementById('polling-countdown').textContent = `${pollingSeconds}s`;
+    updateApiUpdateUI();
+    if (pollingSeconds <= 0) clearInterval(countdownTimer);
+  }, 1000);
+  pollingTimer = setTimeout(async () => {
+    if (!pollingActive) return;
+    await cargarDatos();
+    startPollingCountdown();
+  }, 30000);
+}
+
+// ═══════════════════════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════════════════════
+window.onload = async () => {
+  initMap();
+  await cargarDatos();
+  updateFavsUI();
+  startPollingCountdown();
+  document.getElementById('parada-input').addEventListener('keydown', e => { if (e.key === 'Enter') buscarParada(); });
+  document.getElementById('bici-input').addEventListener('keydown', e => { if (e.key === 'Enter') buscarBici(); });
+  handleURLParams();
+};
+</script>
+</body>
+</html>
