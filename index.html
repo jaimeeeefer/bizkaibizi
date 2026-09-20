@@ -58,6 +58,7 @@
         <button class="tab-btn active" onclick="setTab('parada',this)">🅿️ Parada</button>
         <button class="tab-btn" onclick="setTab('bici',this)">🔢 Bici nº</button>
         <button class="tab-btn" onclick="setTab('modelo',this)">🔋 Modelo</button>
+        <button class="tab-btn" onclick="setTab('ruta',this)">🗺️ Ruta</button>
       </div>
 
       <!-- Tab: Parada -->
@@ -89,6 +90,21 @@
       <!-- Tab: Modelo -->
       <div class="search-input-wrap" id="wrap-modelo">
         <div id="model-chip-list"></div>
+      </div>
+
+      <!-- Tab: Ruta -->
+      <div class="search-input-wrap" id="wrap-ruta">
+        <div class="search-input-row">
+          <select id="ruta-origen" class="route-select">
+             <option value="">Selecciona origen...</option>
+          </select>
+        </div>
+        <div class="search-input-row" style="margin-top: 8px;">
+          <select id="ruta-destino" class="route-select">
+             <option value="">Selecciona destino...</option>
+          </select>
+        </div>
+        <button class="search-btn" onclick="calcularRuta()" style="margin-top: 8px;">Calcular ruta bici</button>
       </div>
     </div>
 
@@ -142,6 +158,7 @@ let bikeTypeCounts = {}; // { "143": 120, "420": 5, ... }
 let markersLayer = null;
 let markerByUid = {};
 let map = null;
+let routingLayer = null;
 const ICON = '/img/bici-pin.png';
 const ICON_EMPTY = '/img/bici-pin-vacio.png';
 
@@ -212,6 +229,7 @@ function procesarDatos(data) {
 
   renderMapMarkers();
   renderModelChips();
+  renderRouteOptions();
   refreshOpenPanels();
 }
 
@@ -416,6 +434,98 @@ function buscarPorModelo(code, btnEl) {
   if (btnEl) btnEl.classList.add('active');
   const matches = allBikes.filter(b => b.bikeType === code);
   mostrarListaBicis(matches, `Bicicletas ${modelNames[code] || ('modelo ' + code)} (${matches.length})`);
+}
+
+// ═══════════════════════════════════════════════════════
+// RUTA
+// ═══════════════════════════════════════════════════════
+function renderRouteOptions() {
+  const sorted = [...stations].sort((a,b) => a.name.localeCompare(b.name));
+  const html = '<option value="">Selecciona parada...</option>' + 
+               sorted.map(s => `<option value="${s.uid}">${s.name}</option>`).join('');
+  
+  const origenSel = document.getElementById('ruta-origen');
+  const destinoSel = document.getElementById('ruta-destino');
+  
+  const valO = origenSel.value, valD = destinoSel.value;
+  origenSel.innerHTML = html;
+  destinoSel.innerHTML = html;
+  origenSel.value = valO; 
+  destinoSel.value = valD;
+}
+
+async function calcularRuta() {
+  const uidO = document.getElementById('ruta-origen').value;
+  const uidD = document.getElementById('ruta-destino').value;
+  
+  if (!uidO || !uidD) {
+    alert("Por favor selecciona un origen y un destino.");
+    return;
+  }
+  if (uidO === uidD) {
+    alert("El origen y el destino deben ser diferentes.");
+    return;
+  }
+  
+  const stO = stations.find(s => s.uid == uidO);
+  const stD = stations.find(s => s.uid == uidD);
+  
+  if (window.innerWidth <= 768 && !sidebarOpen) toggleSidebar(true);
+  hideAllPanels();
+  const panel = document.getElementById('generic-list');
+  panel.innerHTML = `<div class="empty-state"><span class="big">⏳</span>Calculando ruta ciclista óptima...</div>`;
+  panel.style.display = 'block';
+
+  try {
+    const url = `https://router.project-osrm.org/route/v1/bicycle/${stO.lng},${stO.lat};${stD.lng},${stD.lat}?overview=full&geometries=geojson`;
+    const res = await fetch(url);
+    const data = await res.json();
+    
+    if (routingLayer) {
+      map.removeLayer(routingLayer);
+      routingLayer = null;
+    }
+    
+    if (data.code !== 'Ok' || !data.routes || !data.routes.length) {
+      throw new Error("No se pudo calcular la ruta");
+    }
+    
+    const route = data.routes[0];
+    const geojson = route.geometry;
+    const distanceKm = (route.distance / 1000).toFixed(1);
+    const durationMin = Math.round(route.duration / 60);
+    
+    routingLayer = L.geoJSON(geojson, {
+      style: { color: '#0366d6', weight: 5, opacity: 0.8 }
+    }).addTo(map);
+    
+    map.fitBounds(routingLayer.getBounds(), { padding: [50, 50] });
+    
+    panel.innerHTML = `
+      <div class="panel-heading"><span>Ruta ciclista</span></div>
+      <div style="padding: 15px; font-family: 'Nunito', sans-serif;">
+        <div style="font-size: 0.95rem; font-weight: 700; color: var(--ink);">Desde: <span style="font-weight: 400">${stO.name}</span></div>
+        <div style="font-size: 0.95rem; font-weight: 700; color: var(--ink); margin-top: 5px;">Hasta: <span style="font-weight: 400">${stD.name}</span></div>
+        <div style="margin-top: 15px; display: flex; gap: 15px;">
+           <div class="station-stat"><span class="num" style="color: var(--accent);">${distanceKm}</span><span class="lbl">km</span></div>
+           <div class="station-stat"><span class="num" style="color: var(--accent);">${durationMin}</span><span class="lbl">min</span></div>
+        </div>
+        <button class="search-btn" style="margin-top: 20px; background: var(--ink);" onclick="limpiarRuta()">Limpiar mapa</button>
+      </div>
+    `;
+    
+  } catch (err) {
+    panel.innerHTML = `<div class="empty-state"><span class="big">❌</span>Error al calcular ruta. El servicio de OpenStreetMap podría estar ocupado.</div>`;
+    console.error(err);
+  }
+}
+
+function limpiarRuta() {
+  if (routingLayer) {
+    map.removeLayer(routingLayer);
+    routingLayer = null;
+  }
+  renderEmptyState();
 }
 
 // ═══════════════════════════════════════════════════════
