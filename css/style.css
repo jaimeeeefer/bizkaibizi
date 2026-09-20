@@ -347,6 +347,7 @@ body {
 .map-legend-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; margin-right: 4px; }
 
 /* ─── LEAFLET OVERRIDES ──────────────────────────────── */
+.leaflet-marker-icon { will-change: transform; }
 .leaflet-popup-content-wrapper {
   border-radius: 10px !important; font-family: 'Nunito', sans-serif; font-size: 0.78rem;
   background: var(--white) !important; color: var(--ink) !important;

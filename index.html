@@ -9,6 +9,12 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=Nunito:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,300;1,400&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/style.css">
+  <link rel="manifest" href="manifest.json" />
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('sw.js');
+    }
+  </script>
   <script>
     // Aplica el modo oscuro antes de pintar para evitar parpadeos
     if (localStorage.getItem('bb_theme') === 'dark') {
@@ -144,7 +150,7 @@
     <div id="map"></div>
     <!-- ── NAV OVERLAY ── -->
     <div id="nav-overlay" style="display: none; position: absolute; top: 15px; left: 50%; transform: translateX(-50%); width: 90%; max-width: 400px; background: var(--surface); border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.3); z-index: 2000; padding: 15px; font-family: 'Nunito', sans-serif;">
-      <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+      <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 10px;">
         <div style="display: flex; gap: 15px; align-items: center; flex: 1;">
           <div id="nav-icon" style="font-size: 2rem;">⬆️</div>
           <div>
@@ -152,7 +158,10 @@
             <div id="nav-dist" style="font-size: 0.9rem; color: var(--accent); font-weight: 700; margin-top: 4px;">--</div>
           </div>
         </div>
-        <button onclick="detenerNavegacion()" style="background: var(--red); color: white; border: none; border-radius: 8px; padding: 6px 12px; font-weight: bold; cursor: pointer;">X Salir</button>
+        <div style="display: flex; flex-direction: column; gap: 8px;">
+          <button onclick="detenerNavegacion()" style="background: var(--red); color: white; border: none; border-radius: 8px; padding: 6px 12px; font-weight: bold; cursor: pointer;">X Salir</button>
+          <button id="compass-btn" onclick="toggleCompass()" style="background: var(--surface2); color: var(--ink); border: 1px solid var(--border); border-radius: 8px; padding: 6px; font-size: 1.2rem; cursor: pointer;" title="Alinear al Norte">🧭</button>
+        </div>
       </div>
     </div>
     <div class="map-legend">
@@ -520,8 +529,21 @@ async function calcularRuta() {
     const ghKey = '366a45ab-910c-45fa-b70d-1a09abf3d745';
     const url = `https://graphhopper.com/api/1/route?point=${stO.lat},${stO.lng}&point=${stD.lat},${stD.lng}&profile=bike&locale=es&calc_points=true&points_encoded=false&key=${ghKey}`;
 
-    const res = await fetch(url);
-    const data = await res.json();
+    let fetchUrl = url;
+    let usingOSRM = false;
+    let res = await fetch(url);
+    let data = await res.json();
+    
+    if (res.status === 429 || !data.paths || !data.paths.length) {
+      console.warn("Límite de GraphHopper excedido o error, usando OSRM de respaldo...");
+      usingOSRM = true;
+      const osrmUrl = `https://router.project-osrm.org/route/v1/bicycle/${stO.lng},${stO.lat};${stD.lng},${stD.lat}?overview=full&geometries=geojson&steps=true`;
+      res = await fetch(osrmUrl);
+      data = await res.json();
+      if (data.code !== 'Ok' || !data.routes || !data.routes.length) {
+        throw new Error("No se pudo calcular la ruta ni con GraphHopper ni con OSRM");
+      }
+    }
     
     if (routingLayer) {
       map.removeLayer(routingLayer);
@@ -530,20 +552,29 @@ async function calcularRuta() {
     
     let geojson, distanceKm, durationMin, instructions = [];
     
-    if (!data.paths || !data.paths.length) {
-      console.error(data);
-      throw new Error("No se pudo calcular la ruta con GraphHopper");
+    if (!usingOSRM) {
+      const path = data.paths[0];
+      geojson = { type: "LineString", coordinates: path.points.coordinates };
+      distanceKm = (path.distance / 1000).toFixed(1);
+      durationMin = Math.round(path.time / 60000);
+      instructions = path.instructions; 
+      navCoords = path.points.coordinates;
+      navInstructions = instructions;
+    } else {
+      const route = data.routes[0];
+      geojson = route.geometry;
+      distanceKm = (route.distance / 1000).toFixed(1);
+      durationMin = Math.round(route.duration / 60);
+      instructions = route.legs[0].steps.map(s => ({
+        text: s.maneuver.instruction || (s.name ? "Continúa por " + s.name : "Continúa"),
+        distance: s.distance,
+        sign: 0, 
+        interval: [0, 0]
+      }));
+      // OSRM geom doesn't strictly map to intervals easily, so we just use the raw coordinates for nav
+      navCoords = route.geometry.coordinates;
+      navInstructions = instructions;
     }
-    
-    const path = data.paths[0];
-    geojson = { type: "LineString", coordinates: path.points.coordinates };
-    distanceKm = (path.distance / 1000).toFixed(1);
-    durationMin = Math.round(path.time / 60000);
-    instructions = path.instructions; // Preparado para la UI de indicaciones paso a paso
-    
-    // Guardar para modo navegación
-    navCoords = path.points.coordinates;
-    navInstructions = instructions;
     
     routingLayer = L.geoJSON(geojson, {
       style: { color: '#0366d6', weight: 5, opacity: 0.8 }
@@ -569,9 +600,13 @@ async function calcularRuta() {
       <div style="padding: 15px; font-family: 'Nunito', sans-serif;">
         <div style="font-size: 0.95rem; font-weight: 700; color: var(--ink);">Desde: <span style="font-weight: 400">${stO.name}</span></div>
         <div style="font-size: 0.95rem; font-weight: 700; color: var(--ink); margin-top: 5px;">Hasta: <span style="font-weight: 400">${stD.name}</span></div>
-        <div style="margin-top: 15px; display: flex; gap: 15px;">
-           <div class="station-stat"><span class="num" style="color: var(--accent) !important;">${distanceKm}</span><span class="lbl" style="color: var(--ink-soft) !important;">km</span></div>
-           <div class="station-stat"><span class="num" style="color: var(--accent) !important;">${durationMin}</span><span class="lbl" style="color: var(--ink-soft) !important;">min</span></div>
+        
+        <div style="margin-top: 15px; display: flex; gap: 15px; align-items: center; justify-content: space-between;">
+          <div style="display: flex; gap: 15px;">
+            <div class="station-stat"><span class="num" style="color: var(--accent) !important;">${distanceKm}</span><span class="lbl" style="color: var(--ink-soft) !important;">km</span></div>
+            <div class="station-stat"><span class="num" style="color: var(--accent) !important;">${durationMin}</span><span class="lbl" style="color: var(--ink-soft) !important;">min</span></div>
+          </div>
+          <button class="search-btn" style="background: var(--green); padding: 6px 12px; font-size: 0.85rem; width: auto;" onclick="iniciarNavegacion()">🧭 Iniciar</button>
         </div>
         
         ${stepsHtml ? `
@@ -580,10 +615,7 @@ async function calcularRuta() {
           ${stepsHtml}
         </div>` : ''}
         
-        <div style="display: flex; gap: 10px; margin-top: 20px;">
-          <button class="search-btn" style="flex: 1; background: var(--green);" onclick="iniciarNavegacion()">🧭 Iniciar Navegación</button>
-          <button class="search-btn" style="flex: 1; background: var(--ink);" onclick="limpiarRuta()">Limpiar mapa</button>
-        </div>
+        <button class="search-btn" style="margin-top: 20px; background: var(--ink);" onclick="limpiarRuta()">Limpiar mapa</button>
       </div>
     `;
     
@@ -604,6 +636,24 @@ function limpiarRuta() {
 // ═══════════════════════════════════════════════════════
 // NAVEGACIÓN GPS
 // ═══════════════════════════════════════════════════════
+let compassLocked = true;
+let lastHeading = 0;
+
+function toggleCompass() {
+  compassLocked = !compassLocked;
+  if (!compassLocked) {
+    document.getElementById('map').style.transform = `rotate(0deg)`;
+    map.dragging.enable();
+    document.getElementById('compass-btn').style.background = 'var(--surface2)';
+  } else {
+    map.dragging.disable();
+    document.getElementById('map').style.transform = `rotate(${-lastHeading}deg)`;
+    document.getElementById('compass-btn').style.background = 'var(--green)';
+    document.getElementById('compass-btn').style.color = 'white';
+    if (navMarker) map.setView(navMarker.getLatLng(), 19);
+  }
+}
+
 function iniciarNavegacion() {
   if (!navigator.geolocation) {
     alert("Tu navegador no soporta GPS.");
@@ -613,24 +663,38 @@ function iniciarNavegacion() {
   if (window.innerWidth <= 768) toggleSidebar(false);
   document.getElementById('nav-overlay').style.display = 'block';
   
+  compassLocked = true;
+  map.dragging.disable();
+  document.getElementById('map').style.transition = 'transform 0.5s ease-out';
+  document.getElementById('compass-btn').style.background = 'var(--green)';
+  document.getElementById('compass-btn').style.color = 'white';
+  
   // Custom blue dot for user
   const dotIcon = L.divIcon({
     className: '',
-    html: `<div style="width:16px;height:16px;background:#2A81CB;border:3px solid white;border-radius:50%;box-shadow:0 0 4px rgba(0,0,0,0.4);"></div>`,
-    iconSize: [16, 16],
-    iconAnchor: [8, 8]
+    html: `<div style="width:18px;height:18px;background:#2A81CB;border:3px solid white;border-radius:50%;box-shadow:0 0 6px rgba(0,0,0,0.5);"></div>`,
+    iconSize: [18, 18],
+    iconAnchor: [9, 9]
   });
 
   navWatchId = navigator.geolocation.watchPosition((pos) => {
     const lat = pos.coords.latitude;
     const lng = pos.coords.longitude;
+    let heading = pos.coords.heading;
+    
+    if (heading != null) lastHeading = heading;
     
     if (!navMarker) {
       navMarker = L.marker([lat, lng], { icon: dotIcon, zIndexOffset: 1000 }).addTo(map);
-      map.setView([lat, lng], 18);
     } else {
       navMarker.setLatLng([lat, lng]);
-      map.panTo([lat, lng]);
+    }
+    
+    if (compassLocked) {
+      map.setView([lat, lng], 19, { animate: true });
+      if (heading != null) {
+        document.getElementById('map').style.transform = `rotate(${-heading}deg)`;
+      }
     }
     
     actualizarInstruccionVisual(lat, lng);
@@ -649,6 +713,10 @@ function detenerNavegacion() {
   }
   document.getElementById('nav-overlay').style.display = 'none';
   if (window.innerWidth <= 768) toggleSidebar(true);
+  
+  // Reset map
+  document.getElementById('map').style.transform = `rotate(0deg)`;
+  map.dragging.enable();
 }
 
 function actualizarInstruccionVisual(lat, lng) {
