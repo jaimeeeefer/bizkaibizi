@@ -140,8 +140,21 @@
   </div>
 
   <!-- ── MAP ── -->
-  <div id="map-container">
+  <div id="map-container" style="position: relative;">
     <div id="map"></div>
+    <!-- ── NAV OVERLAY ── -->
+    <div id="nav-overlay" style="display: none; position: absolute; top: 15px; left: 50%; transform: translateX(-50%); width: 90%; max-width: 400px; background: var(--surface); border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.3); z-index: 2000; padding: 15px; font-family: 'Nunito', sans-serif;">
+      <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+        <div style="display: flex; gap: 15px; align-items: center; flex: 1;">
+          <div id="nav-icon" style="font-size: 2rem;">⬆️</div>
+          <div>
+            <div id="nav-text" style="font-size: 1.1rem; font-weight: 700; color: var(--ink); line-height: 1.2;">Calculando GPS...</div>
+            <div id="nav-dist" style="font-size: 0.9rem; color: var(--accent); font-weight: 700; margin-top: 4px;">--</div>
+          </div>
+        </div>
+        <button onclick="detenerNavegacion()" style="background: var(--red); color: white; border: none; border-radius: 8px; padding: 6px 12px; font-weight: bold; cursor: pointer;">X Salir</button>
+      </div>
+    </div>
     <div class="map-legend">
       <span><span class="map-legend-dot" style="background:#111318"></span>Con bicis</span>
       <span><span class="map-legend-dot" style="background:#9AA0AC"></span>Vacía</span>
@@ -161,6 +174,10 @@ let markersLayer = null;
 let markerByUid = {};
 let map = null;
 let routingLayer = null;
+let navWatchId = null;
+let navMarker = null;
+let navInstructions = [];
+let navCoords = [];
 const ICON = '/img/bici-pin.png';
 const ICON_EMPTY = '/img/bici-pin-vacio.png';
 
@@ -524,6 +541,10 @@ async function calcularRuta() {
     durationMin = Math.round(path.time / 60000);
     instructions = path.instructions; // Preparado para la UI de indicaciones paso a paso
     
+    // Guardar para modo navegación
+    navCoords = path.points.coordinates;
+    navInstructions = instructions;
+    
     routingLayer = L.geoJSON(geojson, {
       style: { color: '#0366d6', weight: 5, opacity: 0.8 }
     }).addTo(map);
@@ -559,7 +580,10 @@ async function calcularRuta() {
           ${stepsHtml}
         </div>` : ''}
         
-        <button class="search-btn" style="margin-top: 20px; background: var(--ink);" onclick="limpiarRuta()">Limpiar mapa</button>
+        <div style="display: flex; gap: 10px; margin-top: 20px;">
+          <button class="search-btn" style="flex: 1; background: var(--green);" onclick="iniciarNavegacion()">🧭 Iniciar Navegación</button>
+          <button class="search-btn" style="flex: 1; background: var(--ink);" onclick="limpiarRuta()">Limpiar mapa</button>
+        </div>
       </div>
     `;
     
@@ -575,6 +599,97 @@ function limpiarRuta() {
     routingLayer = null;
   }
   renderEmptyState();
+}
+
+// ═══════════════════════════════════════════════════════
+// NAVEGACIÓN GPS
+// ═══════════════════════════════════════════════════════
+function iniciarNavegacion() {
+  if (!navigator.geolocation) {
+    alert("Tu navegador no soporta GPS.");
+    return;
+  }
+  
+  if (window.innerWidth <= 768) toggleSidebar(false);
+  document.getElementById('nav-overlay').style.display = 'block';
+  
+  // Custom blue dot for user
+  const dotIcon = L.divIcon({
+    className: '',
+    html: `<div style="width:16px;height:16px;background:#2A81CB;border:3px solid white;border-radius:50%;box-shadow:0 0 4px rgba(0,0,0,0.4);"></div>`,
+    iconSize: [16, 16],
+    iconAnchor: [8, 8]
+  });
+
+  navWatchId = navigator.geolocation.watchPosition((pos) => {
+    const lat = pos.coords.latitude;
+    const lng = pos.coords.longitude;
+    
+    if (!navMarker) {
+      navMarker = L.marker([lat, lng], { icon: dotIcon, zIndexOffset: 1000 }).addTo(map);
+      map.setView([lat, lng], 18);
+    } else {
+      navMarker.setLatLng([lat, lng]);
+      map.panTo([lat, lng]);
+    }
+    
+    actualizarInstruccionVisual(lat, lng);
+    
+  }, (err) => {
+    console.error("GPS Error", err);
+  }, { enableHighAccuracy: true });
+}
+
+function detenerNavegacion() {
+  if (navWatchId) navigator.geolocation.clearWatch(navWatchId);
+  navWatchId = null;
+  if (navMarker) {
+    map.removeLayer(navMarker);
+    navMarker = null;
+  }
+  document.getElementById('nav-overlay').style.display = 'none';
+  if (window.innerWidth <= 768) toggleSidebar(true);
+}
+
+function actualizarInstruccionVisual(lat, lng) {
+  if (!navCoords.length || !navInstructions.length) return;
+  
+  let minDist = Infinity;
+  let closestIdx = 0;
+  
+  navCoords.forEach((coord, i) => {
+    const d = map.distance([lat, lng], [coord[1], coord[0]]);
+    if (d < minDist) {
+      minDist = d;
+      closestIdx = i;
+    }
+  });
+  
+  let currentInst = navInstructions[0];
+  let nextInst = null;
+  
+  for (let i = 0; i < navInstructions.length; i++) {
+    const interval = navInstructions[i].interval;
+    if (closestIdx >= interval[0] && closestIdx <= interval[1]) {
+      currentInst = navInstructions[i];
+      if (i + 1 < navInstructions.length) nextInst = navInstructions[i + 1];
+      break;
+    }
+  }
+  
+  document.getElementById('nav-icon').textContent = getSignIcon(currentInst.sign);
+  document.getElementById('nav-text').textContent = currentInst.text;
+  
+  // Calculate remaining distance to next instruction
+  if (nextInst) {
+    const nextNodeIdx = currentInst.interval[1];
+    const nextNodeCoord = navCoords[nextNodeIdx];
+    const distToNext = map.distance([lat, lng], [nextNodeCoord[1], nextNodeCoord[0]]);
+    const distText = distToNext > 1000 ? (distToNext/1000).toFixed(1) + ' km' : Math.round(distToNext) + ' m';
+    document.getElementById('nav-dist').textContent = "En " + distText;
+  } else {
+    document.getElementById('nav-dist').textContent = "Llegando al destino";
+  }
 }
 
 // ═══════════════════════════════════════════════════════
