@@ -334,11 +334,103 @@ function focusStation(station) {
 // ═══════════════════════════════════════════════════════
 // TABS
 // ═══════════════════════════════════════════════════════
-function setTab(tab, btn) {
+// Cada pestaña recuerda su propio resultado (tabViews) y su posición de scroll.
+// Una "vista" es un descriptor ligero, p. ej. {type:'station', uid} o {type:'model', code};
+// al volver a la pestaña se vuelve a pintar con los datos actuales.
+const TAB_IDS = ['parada', 'bici', 'modelo', 'ruta'];
+let currentTab = 'parada';
+const tabViews = { parada: null, bici: null, modelo: null, ruta: null };
+const tabScrollTop = { parada: 0, bici: 0, modelo: 0, ruta: 0 };
+
+// noRestore = true → solo cambia de pestaña, sin repintar su resultado anterior
+// (lo usan las funciones que van a pintar un resultado nuevo justo después).
+function setTab(tab, btn, noRestore) {
+  const prev = currentTab;
+  if (tab !== prev) {
+    const rp = document.getElementById('results-panel');
+    if (rp) tabScrollTop[prev] = rp.scrollTop;
+    currentTab = tab;
+  }
+
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-  btn.classList.add('active');
+  const tabBtn = btn || document.querySelectorAll('.tab-btn')[TAB_IDS.indexOf(tab)];
+  if (tabBtn) tabBtn.classList.add('active');
   document.querySelectorAll('.search-input-wrap').forEach(w => w.classList.remove('active'));
   document.getElementById('wrap-' + tab).classList.add('active');
+
+  if (tab === prev) return;
+  syncRouteLayer(!noRestore);
+  if (!noRestore) restoreTabView(tab);
+}
+
+// Repinta en el panel de resultados lo último que se vio en esa pestaña
+function restoreTabView(tab) {
+  const view = tabViews[tab];
+  if (!view || !renderView(view, true)) {
+    tabViews[tab] = null;
+    hideAllPanels();
+    document.getElementById('empty-state').style.display = 'block';
+  }
+  document.getElementById('results-panel').scrollTop = tabScrollTop[tab] || 0;
+}
+
+// Pinta una vista. Devuelve false si ya no se puede (p. ej. la bici ya no existe).
+function renderView(view, moveMap) {
+  switch (view.type) {
+    case 'station': {
+      const station = stations.find(s => s.uid === view.uid);
+      if (!station) return false;
+      mostrarEstacion(station, moveMap, true);
+      return true;
+    }
+    case 'bike': {
+      const bike = allBikes.find(b => b.number === view.number);
+      if (!bike) return false;
+      mostrarBici(bike, true);
+      return true;
+    }
+    case 'city': {
+      const matches = stations.filter(s => s.city === view.city);
+      mostrarListaParadas(matches, `Paradas en ${view.city} (${matches.length})`, true);
+      return true;
+    }
+    case 'paradaSearch':
+      mostrarListaParadas(filtrarParadas(view.q), undefined, true);
+      return true;
+    case 'bikeSearch':
+      mostrarListaBicis(allBikes.filter(b => b.number.includes(view.q)), undefined, true);
+      return true;
+    case 'model': {
+      const matches = allBikes.filter(b => b.bikeType === view.code);
+      mostrarListaBicis(matches, `Bicicletas ${modelNames[view.code] || ('modelo ' + view.code)} (${matches.length})`, true);
+      return true;
+    }
+    case 'message':
+      mostrarMensaje(view.icon, view.text);
+      return true;
+    case 'route':
+      mostrarRuta(view);
+      return true;
+  }
+  return false;
+}
+
+function filtrarParadas(q) {
+  return stations.filter(s => s.name.toLowerCase().includes(q) || String(s.number).includes(q));
+}
+
+// La línea azul de la ruta solo se ve en la pestaña Ruta (o mientras se navega)
+function syncRouteLayer(fit) {
+  if (!routingLayer || !map) return;
+  const onRoute = currentTab === 'ruta' && tabViews.ruta && tabViews.ruta.type === 'route';
+  if (onRoute || navWatchId) {
+    if (!map.hasLayer(routingLayer)) {
+      routingLayer.addTo(map);
+      if (fit && onRoute) map.fitBounds(routingLayer.getBounds(), { padding: [50, 50] });
+    }
+  } else if (map.hasLayer(routingLayer)) {
+    map.removeLayer(routingLayer);
+  }
 }
 
 // ═══════════════════════════════════════════════════════
@@ -393,7 +485,7 @@ function seleccionarMunicipio(city) {
   mostrarParadasCiudad(city);
 }
 function mostrarParadasCiudad(city) {
-  currentView = { type: 'city', city };
+  tabViews.parada = { type: 'city', city };
   const matches = stations.filter(s => s.city === city);
   mostrarListaParadas(matches, `Paradas en ${city} (${matches.length})`);
 }
@@ -406,14 +498,12 @@ function seleccionarParada(uid) {
 function buscarParada() {
   const q = document.getElementById('parada-input').value.trim().toLowerCase();
   if (!q) return;
-  const matches = stations.filter(s =>
-    s.name.toLowerCase().includes(q) || String(s.number).includes(q)
-  );
+  const matches = filtrarParadas(q);
   if (matches.length === 1) { mostrarEstacion(matches[0], true); return; }
   if (matches.length > 1) {
     const cityExact = stations.find(s => s.city.toLowerCase() === q);
     if (cityExact) { mostrarParadasCiudad(cityExact.city); return; }
-    currentView = null;
+    tabViews.parada = { type: 'paradaSearch', q };
     mostrarListaParadas(matches);
     return;
   }
@@ -449,7 +539,7 @@ function buscarBici() {
   if (exact) { mostrarBici(exact); return; }
   const matches = allBikes.filter(b => b.number.includes(q));
   if (matches.length === 1) mostrarBici(matches[0]);
-  else if (matches.length > 1) { currentView = null; mostrarListaBicis(matches); }
+  else if (matches.length > 1) { tabViews.bici = { type: 'bikeSearch', q }; mostrarListaBicis(matches); }
   else mostrarSinResultados('No se ha encontrado ninguna bicicleta con ese número.');
 }
 
@@ -465,14 +555,15 @@ const modelNames = {
 function renderModelChips() {
   const box = document.getElementById('model-chip-list');
   const codes = Object.keys(bikeTypeCounts).sort((a, b) => bikeTypeCounts[b] - bikeTypeCounts[a]);
+  const activeCode = tabViews.modelo && tabViews.modelo.type === 'model' ? tabViews.modelo.code : null;
   box.innerHTML = codes.map(code =>
-    `<button class="model-chip" onclick="buscarPorModelo('${code}', this)">${modelNames[code] || ('Modelo ' + code)} <span style="opacity:.7">(${bikeTypeCounts[code]})</span></button>`
+    `<button class="model-chip${code === activeCode ? ' active' : ''}" onclick="buscarPorModelo('${code}', this)">${modelNames[code] || ('Modelo ' + code)} <span style="opacity:.7">(${bikeTypeCounts[code]})</span></button>`
   ).join('');
 }
 function buscarPorModelo(code, btnEl) {
   document.querySelectorAll('.model-chip').forEach(c => c.classList.remove('active'));
   if (btnEl) btnEl.classList.add('active');
-  currentView = { type: 'model', code };
+  tabViews.modelo = { type: 'model', code };
   const matches = allBikes.filter(b => b.bikeType === code);
   mostrarListaBicis(matches, `Bicicletas ${modelNames[code] || ('modelo ' + code)} (${matches.length})`);
 }
@@ -548,22 +639,22 @@ async function calcularRuta() {
   }
   
   if (window.innerWidth <= 768 && !sidebarOpen) toggleSidebar(true);
-  currentView = null;
+  const reqId = ++rutaReqId;
+  const activa = () => reqId === rutaReqId; // false si el usuario lanzó otra ruta mientras tanto
   resetResultsScroll();
-  hideAllPanels();
-  const panel = document.getElementById('generic-list');
-  panel.innerHTML = `<div class="empty-state"><span class="big">⏳</span>${nameO === UBICACION_LABEL ? 'Obteniendo tu ubicación…' : 'Preparando ruta…'}</div>`;
-  panel.style.display = 'block';
+  setRutaView({ type: 'message', icon: '⏳', text: nameO === UBICACION_LABEL ? 'Obteniendo tu ubicación…' : 'Preparando ruta…' });
 
   let stO, stD;
   try {
     [stO, stD] = await Promise.all([resolverPuntoRuta(nameO), resolverPuntoRuta(nameD)]);
   } catch (err) {
-    panel.innerHTML = `<div class="empty-state"><span class="big">📍</span>${err.message === '__INVALID__' ? 'Por favor selecciona paradas válidas de la lista.' : escapeHtml(err.message)}</div>`;
+    if (!activa()) return;
+    setRutaView({ type: 'message', icon: '📍', text: err.message === '__INVALID__' ? 'Por favor selecciona paradas válidas de la lista.' : err.message });
     return;
   }
+  if (!activa()) return;
 
-  panel.innerHTML = `<div class="empty-state"><span class="big">⏳</span>Calculando ruta ciclista óptima...</div>`;
+  setRutaView({ type: 'message', icon: '⏳', text: 'Calculando ruta ciclista óptima...' });
 
   try {
     const ghKey = '366a45ab-910c-45fa-b70d-1a09abf3d745';
@@ -597,6 +688,8 @@ async function calcularRuta() {
       }
     }
     
+    if (!activa()) return;
+
     if (routingLayer) {
       map.removeLayer(routingLayer);
       routingLayer = null;
@@ -656,59 +749,85 @@ async function calcularRuta() {
     
     routingLayer = L.geoJSON(geojson, {
       style: { color: '#0366d6', weight: 5, opacity: 0.8 }
-    }).addTo(map);
-    
-    map.fitBounds(routingLayer.getBounds(), { padding: [50, 50] });
-    
-    const stepsHtml = instructions.map(step => {
-      const dist = step.distance > 1000 ? (step.distance / 1000).toFixed(1) + ' km' : Math.round(step.distance) + ' m';
-      return `
-        <div style="display: flex; gap: 10px; margin-top: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--border);">
-          <div style="font-size: 1.1rem; width: 24px; text-align: center;">${getSignIcon(step.sign)}</div>
-          <div style="flex: 1;">
-            <div style="font-size: 0.9rem; color: var(--ink); line-height: 1.3;">${step.text}</div>
-            <div style="font-size: 0.75rem; color: var(--ink-soft); margin-top: 2px;">${dist}</div>
-          </div>
-        </div>
-      `;
-    }).join('');
-    
-    const isFavRuta = getFavsRoutes().some(f => f.origen === stO.name && f.destino === stD.name);
-    panel.innerHTML = `
-      <div class="panel-heading">
-        <span>Ruta ciclista</span>
-        <div class="panel-heading-actions">
-          <button class="btn-panel-action ${isFavRuta ? 'saved' : ''}" style="display:inline-flex" id="btn-fav-ruta" onclick="toggleFavRuta('${escapeHtml(stO.name)}','${escapeHtml(stD.name)}')">
-            ${isFavRuta ? '★ Guardada' : '☆ Guardar ruta'}
-          </button>
-        </div>
-      </div>
-      <div style="padding: 15px; font-family: 'Nunito', sans-serif;">
-        <div style="font-size: 0.95rem; font-weight: 700; color: var(--ink);">Desde: <span style="font-weight: 400">${stO.name}</span></div>
-        <div style="font-size: 0.95rem; font-weight: 700; color: var(--ink); margin-top: 5px;">Hasta: <span style="font-weight: 400">${stD.name}</span></div>
-        
-        <div style="margin-top: 15px; display: flex; gap: 15px; align-items: center; justify-content: space-between;">
-          <div style="display: flex; gap: 15px;">
-            <div class="station-stat"><span class="num" style="color: var(--accent) !important;">${distanceKm}</span><span class="lbl" style="color: var(--ink-soft) !important;">km</span></div>
-            <div class="station-stat"><span class="num" style="color: var(--accent) !important;">${durationMin}</span><span class="lbl" style="color: var(--ink-soft) !important;">min</span></div>
-          </div>
-          <button class="search-btn" style="background: var(--green); padding: 6px 12px; font-size: 0.85rem; width: auto;" onclick="iniciarNavegacion()">🧭 Iniciar</button>
-        </div>
-        
-        ${stepsHtml ? `
-        <div style="margin-top: 25px;">
-          <h4 style="font-size: 0.9rem; color: var(--ink-soft); text-transform: uppercase; margin-bottom: 5px;">Indicaciones</h4>
-          ${stepsHtml}
-        </div>` : ''}
-        
-        <button class="search-btn" style="margin-top: 20px; background: var(--ink);" onclick="limpiarRuta()">Limpiar mapa</button>
-      </div>
-    `;
-    
+    });
+
+    // Se guarda como vista de la pestaña Ruta. La línea del mapa y el panel solo se
+    // pintan si el usuario sigue en esa pestaña; si no, se pintarán al volver.
+    setRutaView({ type: 'route', origen: stO.name, destino: stD.name, distanceKm, durationMin, instructions });
+    syncRouteLayer(true);
+
   } catch (err) {
-    panel.innerHTML = `<div class="empty-state"><span class="big">❌</span>Error al calcular ruta. El servicio de OpenStreetMap podría estar ocupado.</div>`;
+    if (!activa()) return;
+    setRutaView({ type: 'message', icon: '❌', text: 'Error al calcular ruta. El servicio de OpenStreetMap podría estar ocupado.' });
     console.error(err);
   }
+}
+
+let rutaReqId = 0;
+
+// Guarda la vista de la pestaña Ruta y la pinta solo si esa pestaña está activa
+function setRutaView(view) {
+  tabViews.ruta = view;
+  if (currentTab === 'ruta') renderView(view, false);
+}
+
+function mostrarMensaje(icon, text) {
+  hideAllPanels();
+  const el = document.getElementById('generic-list');
+  el.innerHTML = `<div class="empty-state"><span class="big">${icon}</span>${escapeHtml(text)}</div>`;
+  el.style.display = 'block';
+}
+
+function mostrarRuta(view) {
+  hideAllPanels();
+  const panel = document.getElementById('generic-list');
+  const { origen, destino, distanceKm, durationMin, instructions } = view;
+
+  const stepsHtml = instructions.map(step => {
+    const dist = step.distance > 1000 ? (step.distance / 1000).toFixed(1) + ' km' : Math.round(step.distance) + ' m';
+    return `
+      <div style="display: flex; gap: 10px; margin-top: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--border);">
+        <div style="font-size: 1.1rem; width: 24px; text-align: center;">${getSignIcon(step.sign)}</div>
+        <div style="flex: 1;">
+          <div style="font-size: 0.9rem; color: var(--ink); line-height: 1.3;">${step.text}</div>
+          <div style="font-size: 0.75rem; color: var(--ink-soft); margin-top: 2px;">${dist}</div>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  const isFavRuta = getFavsRoutes().some(f => f.origen === origen && f.destino === destino);
+  panel.innerHTML = `
+    <div class="panel-heading">
+      <span>Ruta ciclista</span>
+      <div class="panel-heading-actions">
+        <button class="btn-panel-action ${isFavRuta ? 'saved' : ''}" style="display:inline-flex" id="btn-fav-ruta" onclick="toggleFavRuta('${escapeHtml(origen)}','${escapeHtml(destino)}')">
+          ${isFavRuta ? '★ Guardada' : '☆ Guardar ruta'}
+        </button>
+      </div>
+    </div>
+    <div style="padding: 15px; font-family: 'Nunito', sans-serif;">
+      <div style="font-size: 0.95rem; font-weight: 700; color: var(--ink);">Desde: <span style="font-weight: 400">${origen}</span></div>
+      <div style="font-size: 0.95rem; font-weight: 700; color: var(--ink); margin-top: 5px;">Hasta: <span style="font-weight: 400">${destino}</span></div>
+
+      <div style="margin-top: 15px; display: flex; gap: 15px; align-items: center; justify-content: space-between;">
+        <div style="display: flex; gap: 15px;">
+          <div class="station-stat"><span class="num" style="color: var(--accent) !important;">${distanceKm}</span><span class="lbl" style="color: var(--ink-soft) !important;">km</span></div>
+          <div class="station-stat"><span class="num" style="color: var(--accent) !important;">${durationMin}</span><span class="lbl" style="color: var(--ink-soft) !important;">min</span></div>
+        </div>
+        <button class="search-btn" style="background: var(--green); padding: 6px 12px; font-size: 0.85rem; width: auto;" onclick="iniciarNavegacion()">🧭 Iniciar</button>
+      </div>
+
+      ${stepsHtml ? `
+      <div style="margin-top: 25px;">
+        <h4 style="font-size: 0.9rem; color: var(--ink-soft); text-transform: uppercase; margin-bottom: 5px;">Indicaciones</h4>
+        ${stepsHtml}
+      </div>` : ''}
+
+      <button class="search-btn" style="margin-top: 20px; background: var(--ink);" onclick="limpiarRuta()">Limpiar mapa</button>
+    </div>
+  `;
+  panel.style.display = 'block';
 }
 
 function limpiarRuta() {
@@ -930,19 +1049,16 @@ function resetResultsScroll() {
   if (panel) panel.scrollTop = 0;
 }
 function renderEmptyState() {
-  currentView = null;
+  tabViews[currentTab] = null;
   resetResultsScroll();
   hideAllPanels();
   document.getElementById('empty-state').style.display = 'block';
 }
 function mostrarSinResultados(msg) {
-  currentView = null;
+  tabViews[currentTab] = { type: 'message', icon: '🔍', text: msg };
   resetResultsScroll();
   if (window.innerWidth <= 768 && !sidebarOpen) toggleSidebar(true);
-  hideAllPanels();
-  const el = document.getElementById('generic-list');
-  el.innerHTML = `<div class="empty-state"><span class="big">🔍</span>${escapeHtml(msg)}</div>`;
-  el.style.display = 'block';
+  mostrarMensaje('🔍', msg);
 }
 
 // ═══════════════════════════════════════════════════════
@@ -953,15 +1069,14 @@ function mostrarEstacion(station, moverMapa, silent) {
   if (!station) return;
   if (!silent) {
     if (window.innerWidth <= 768 && !sidebarOpen) toggleSidebar(true);
+    setTab('parada', null, true);
     resetResultsScroll();
-    const paradaTab = document.querySelectorAll('.tab-btn')[0];
-    if (paradaTab) setTab('parada', paradaTab);
     document.getElementById('parada-input').value = station.name;
     closeAutocomplete('stop-autocomplete');
   }
   hideAllPanels();
   currentStationUid = station.uid;
-  currentView = { type: 'station', uid: station.uid };
+  tabViews.parada = { type: 'station', uid: station.uid };
   const panel = document.getElementById('station-detail');
 
   const isFav = getFavs().some(f => f.uid === station.uid);
@@ -1022,14 +1137,13 @@ function mostrarBici(bike, silent) {
   if (!bike) return;
   if (!silent) {
     if (window.innerWidth <= 768 && !sidebarOpen) toggleSidebar(true);
+    setTab('bici', null, true);
     resetResultsScroll();
-    const biciTab = document.querySelectorAll('.tab-btn')[1];
-    if (biciTab) setTab('bici', biciTab);
     document.getElementById('bici-input').value = bike.number;
     closeAutocomplete('bike-autocomplete');
   }
   hideAllPanels();
-  currentView = { type: 'bike', number: bike.number };
+  tabViews.bici = { type: 'bike', number: bike.number };
   const panel = document.getElementById('bike-detail');
   const station = bike.station;
   const isFavBike = getFavsBikes().some(f => f.number === bike.number);
@@ -1112,23 +1226,12 @@ function bikeCardHtmlWithStation(bike) {
 
 // Refresca el panel actualmente abierto tras cada actualización de datos,
 // sin tocar nada que el usuario tenga abierto/oculto (barra lateral, mapa, etc.)
-let currentView = null; // {type:'station',uid} | {type:'bike',number} | {type:'city',city} | {type:'model',code}
-
 function refreshOpenPanels() {
-  if (!currentView) return;
-  if (currentView.type === 'station') {
-    const station = stations.find(s => s.uid === currentView.uid);
-    if (station) mostrarEstacion(station, false, true);
-  } else if (currentView.type === 'bike') {
-    const bike = allBikes.find(b => b.number === currentView.number);
-    if (bike) mostrarBici(bike, true);
-  } else if (currentView.type === 'city') {
-    const matches = stations.filter(s => s.city === currentView.city);
-    mostrarListaParadas(matches, `Paradas en ${currentView.city} (${matches.length})`, true);
-  } else if (currentView.type === 'model') {
-    const matches = allBikes.filter(b => b.bikeType === currentView.code);
-    mostrarListaBicis(matches, `Bicicletas ${modelNames[currentView.code] || ('modelo ' + currentView.code)} (${matches.length})`, true);
-  }
+  const view = tabViews[currentTab];
+  if (!view) return;
+  // Mensajes y rutas calculadas no dependen de los datos de las paradas
+  if (view.type === 'message' || view.type === 'route') return;
+  renderView(view, false);
 }
 
 // ═══════════════════════════════════════════════════════
@@ -1206,13 +1309,13 @@ function removeFavRuta(index) {
   updateFavsUI();
 }
 function usarRutaFavorita(origen, destino) {
-  document.querySelectorAll('.tab-btn')[3].click();
+  setTab('ruta', null, true);
   document.getElementById('ruta-origen').value = origen;
   document.getElementById('ruta-destino').value = destino;
   calcularRuta();
 }
 function irARutaHacia(destino) {
-  document.querySelectorAll('.tab-btn')[3].click();
+  setTab('ruta', null, true);
   document.getElementById('ruta-origen').value = UBICACION_LABEL;
   document.getElementById('ruta-destino').value = destino;
   calcularRuta();
@@ -1250,7 +1353,7 @@ function updateFavsUI() {
     div.innerHTML = `<span class="fav-icon">🚲</span><span class="fav-label">Bici nº ${escapeHtml(fav.number)}${bike ? '' : ' <span style="opacity:.6">(no localizada)</span>'}</span><button class="fav-del" onclick="event.stopPropagation();removeFavBici(${i})" title="Eliminar">×</button>`;
     div.addEventListener('click', (e) => {
       if (e.target.closest('.fav-del')) return;
-      if (bike) mostrarBici(bike, true);
+      if (bike) mostrarBici(bike);
     });
     listEl.appendChild(div);
   });
@@ -1300,7 +1403,6 @@ function handleURLParams() {
   } else if (bici) {
     const bike = allBikes.find(b => b.number === bici);
     if (bike) {
-      document.querySelectorAll('.tab-btn')[1].click();
       mostrarBici(bike);
     }
   }
