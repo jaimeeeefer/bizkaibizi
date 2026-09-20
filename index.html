@@ -312,7 +312,7 @@ function renderMapMarkers() {
     if (station.lat == null || station.lng == null) return;
     const marker = L.marker([station.lat, station.lng], { icon: makeStationIcon(station) });
     marker.bindPopup(popupHtml(station));
-    marker.on('click', () => mostrarEstacion(station, false));
+    marker.on('click', () => { mostrarEstacion(station, false); focusStation(station, true); });
     marker.addTo(markersLayer);
     markerByUid[station.uid] = marker;
   });
@@ -324,9 +324,15 @@ function popupHtml(station) {
           <br><span style="color:var(--accent);cursor:pointer" onclick="mostrarEstacion(stations.find(s=>s.uid===${station.uid}), true)">Ver detalle →</span>`;
 }
 
-function focusStation(station) {
+// Centra el mapa en la parada y abre su popup.
+// keepZoom = true → mantiene el zoom actual (clic en un marcador); si no, zoom 16.
+// Primero se centra (sin animación) y DESPUÉS se abre el popup: si el popup se abre
+// mientras el mapa se está animando, su autoPan corta la animación a medias y la
+// parada acaba a la vista pero descentrada. Abriéndolo después, el autoPan solo
+// actúa si el popup se sale de la pantalla (mapas muy pequeños en móvil).
+function focusStation(station, keepZoom) {
   if (!map) return;
-  map.setView([station.lat, station.lng], 16, { animate: true });
+  map.setView([station.lat, station.lng], keepZoom ? map.getZoom() : 16, { animate: false });
   const marker = markerByUid[station.uid];
   if (marker) marker.openPopup();
 }
@@ -1424,6 +1430,7 @@ function toggleSidebar(forceOpen) {
   
   document.getElementById('sidebar').style.display = sidebarOpen ? 'flex' : 'none';
   document.getElementById('mobile-toggle').textContent = sidebarOpen ? '✖' : '☰';
+  if (map) map.invalidateSize();
   setTimeout(() => map.invalidateSize(), 50);
 }
 // Aplicar estado inicial
