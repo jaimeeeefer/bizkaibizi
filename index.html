@@ -648,13 +648,13 @@ function toggleCompass() {
   compassLocked = !compassLocked;
   const needle = document.getElementById('compass-needle');
   if (!compassLocked) {
-    document.getElementById('map').style.transform = `rotate(0deg)`;
+    document.getElementById('map').style.transform = `translate(-50%, -50%) rotate(0deg)`;
     needle.style.transform = `rotate(0deg)`;
     map.dragging.enable();
     document.getElementById('map-compass').style.opacity = '0.7';
   } else {
     map.dragging.disable();
-    document.getElementById('map').style.transform = `rotate(${-lastHeading}deg)`;
+    document.getElementById('map').style.transform = `translate(-50%, -50%) rotate(${-lastHeading}deg)`;
     needle.style.transform = `rotate(${-lastHeading}deg)`;
     document.getElementById('map-compass').style.opacity = '1';
     if (navMarker) map.setView(navMarker.getLatLng(), 19);
@@ -673,7 +673,7 @@ function handleOrientation(e) {
   if (heading != null) {
     lastHeading = heading;
     if (compassLocked) {
-      document.getElementById('map').style.transform = `rotate(${-heading}deg)`;
+      document.getElementById('map').style.transform = `translate(-50%, -50%) rotate(${-heading}deg)`;
       document.getElementById('compass-needle').style.transform = `rotate(${-heading}deg)`;
     }
   }
@@ -692,10 +692,11 @@ function iniciarNavegacion() {
   // Hacer el mapa más grande que la pantalla para que al rotar no se corten las esquinas
   const mapEl = document.getElementById('map');
   mapEl.style.position = 'absolute';
-  mapEl.style.width = '150vw';
-  mapEl.style.height = '150vh';
-  mapEl.style.left = '-25vw';
-  mapEl.style.top = '-25vh';
+  mapEl.style.width = '150vmax';
+  mapEl.style.height = '150vmax';
+  mapEl.style.left = '50%';
+  mapEl.style.top = '50%';
+  mapEl.style.transform = 'translate(-50%, -50%) rotate(0deg)';
   map.invalidateSize();
   
   compassLocked = true;
@@ -733,7 +734,7 @@ function iniciarNavegacion() {
     if (gpsHeading != null && !orientationHandler) {
       lastHeading = gpsHeading;
       if (compassLocked) {
-        document.getElementById('map').style.transform = `rotate(${-gpsHeading}deg)`;
+        document.getElementById('map').style.transform = `translate(-50%, -50%) rotate(${-gpsHeading}deg)`;
         document.getElementById('compass-needle').style.transform = `rotate(${-gpsHeading}deg)`;
       }
     }
