@@ -136,11 +136,11 @@
     <!-- Favorites -->
     <div id="favs-section">
       <div class="favs-header" onclick="toggleFavs()">
-        <span class="favs-header-title">⭐ Paradas favoritas</span>
+        <span class="favs-header-title">⭐ Favoritos</span>
         <span class="favs-toggle-arrow" id="favs-arrow">▾</span>
       </div>
       <div id="favs-list">
-        <div id="no-data-msg">Aún no tienes paradas favoritas.</div>
+        <div id="no-data-msg">Aún no tienes paradas, bicis ni rutas guardadas.</div>
       </div>
     </div>
   </div>
@@ -149,13 +149,14 @@
   <div id="map-container" style="position: relative;">
     <div id="map"></div>
     <!-- ── NAV OVERLAY ── -->
-    <div id="nav-overlay" style="display: none; position: absolute; top: 15px; left: 50%; transform: translateX(-50%); width: 90%; max-width: 400px; background: var(--surface); border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.3); z-index: 2000; padding: 15px; font-family: 'Nunito', sans-serif;">
+    <div id="nav-overlay" style="display: none; position: absolute; top: calc(15px + env(safe-area-inset-top, 0px)); left: 50%; transform: translateX(-50%); width: 90%; max-width: 400px; background: var(--surface); border-radius: 14px; box-shadow: 0 8px 24px rgba(0,0,0,0.3); z-index: 2000; padding: 15px; font-family: 'Nunito', sans-serif; backdrop-filter: blur(6px);">
       <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 10px;">
         <div style="display: flex; gap: 15px; align-items: center; flex: 1;">
           <div id="nav-icon" style="font-size: 2rem;">⬆️</div>
           <div>
             <div id="nav-text" style="font-size: 1.1rem; font-weight: 700; color: var(--ink); line-height: 1.2;">Calculando GPS...</div>
             <div id="nav-dist" style="font-size: 0.9rem; color: var(--accent); font-weight: 700; margin-top: 4px;">--</div>
+            <div id="nav-remaining" style="font-size: 0.76rem; color: var(--ink-soft); margin-top: 3px;">--</div>
           </div>
         </div>
         <div style="display: flex; flex-direction: column; gap: 12px; align-items: center;">
@@ -387,6 +388,7 @@ function seleccionarMunicipio(city) {
   mostrarParadasCiudad(city);
 }
 function mostrarParadasCiudad(city) {
+  currentView = { type: 'city', city };
   const matches = stations.filter(s => s.city === city);
   mostrarListaParadas(matches, `Paradas en ${city} (${matches.length})`);
 }
@@ -406,6 +408,7 @@ function buscarParada() {
   if (matches.length > 1) {
     const cityExact = stations.find(s => s.city.toLowerCase() === q);
     if (cityExact) { mostrarParadasCiudad(cityExact.city); return; }
+    currentView = null;
     mostrarListaParadas(matches);
     return;
   }
@@ -441,7 +444,7 @@ function buscarBici() {
   if (exact) { mostrarBici(exact); return; }
   const matches = allBikes.filter(b => b.number.includes(q));
   if (matches.length === 1) mostrarBici(matches[0]);
-  else if (matches.length > 1) mostrarListaBicis(matches);
+  else if (matches.length > 1) { currentView = null; mostrarListaBicis(matches); }
   else mostrarSinResultados('No se ha encontrado ninguna bicicleta con ese número.');
 }
 
@@ -464,6 +467,7 @@ function renderModelChips() {
 function buscarPorModelo(code, btnEl) {
   document.querySelectorAll('.model-chip').forEach(c => c.classList.remove('active'));
   if (btnEl) btnEl.classList.add('active');
+  currentView = { type: 'model', code };
   const matches = allBikes.filter(b => b.bikeType === code);
   mostrarListaBicis(matches, `Bicicletas ${modelNames[code] || ('modelo ' + code)} (${matches.length})`);
 }
@@ -524,6 +528,7 @@ async function calcularRuta() {
   }
   
   if (window.innerWidth <= 768 && !sidebarOpen) toggleSidebar(true);
+  currentView = null;
   hideAllPanels();
   const panel = document.getElementById('generic-list');
   panel.innerHTML = `<div class="empty-state"><span class="big">⏳</span>Calculando ruta ciclista óptima...</div>`;
@@ -637,8 +642,16 @@ async function calcularRuta() {
       `;
     }).join('');
     
+    const isFavRuta = getFavsRoutes().some(f => f.origen === stO.name && f.destino === stD.name);
     panel.innerHTML = `
-      <div class="panel-heading"><span>Ruta ciclista</span></div>
+      <div class="panel-heading">
+        <span>Ruta ciclista</span>
+        <div class="panel-heading-actions">
+          <button class="btn-panel-action ${isFavRuta ? 'saved' : ''}" style="display:inline-flex" id="btn-fav-ruta" onclick="toggleFavRuta('${escapeHtml(stO.name)}','${escapeHtml(stD.name)}')">
+            ${isFavRuta ? '★ Guardada' : '☆ Guardar ruta'}
+          </button>
+        </div>
+      </div>
       <div style="padding: 15px; font-family: 'Nunito', sans-serif;">
         <div style="font-size: 0.95rem; font-weight: 700; color: var(--ink);">Desde: <span style="font-weight: 400">${stO.name}</span></div>
         <div style="font-size: 0.95rem; font-weight: 700; color: var(--ink); margin-top: 5px;">Hasta: <span style="font-weight: 400">${stD.name}</span></div>
@@ -787,7 +800,7 @@ function iniciarNavegacion() {
       map.setView([lat, lng], 19, { animate: true });
     }
     
-    actualizarInstruccionVisual(lat, lng);
+    actualizarInstruccionVisual(lat, lng, pos.coords.speed);
     
   }, (err) => {
     console.error("GPS Error", err);
@@ -822,7 +835,7 @@ function detenerNavegacion() {
   map.dragging.enable();
 }
 
-function actualizarInstruccionVisual(lat, lng) {
+function actualizarInstruccionVisual(lat, lng, speedMs) {
   if (!navCoords.length || !navInstructions.length) return;
   
   let minDist = Infinity;
@@ -861,6 +874,15 @@ function actualizarInstruccionVisual(lat, lng) {
   } else {
     document.getElementById('nav-dist').textContent = "Llegando al destino";
   }
+
+  // Distancia total restante hasta el destino (suma de tramos desde el punto más cercano)
+  let remaining = map.distance([lat, lng], [navCoords[closestIdx][1], navCoords[closestIdx][0]]);
+  for (let i = closestIdx; i < navCoords.length - 1; i++) {
+    remaining += map.distance([navCoords[i][1], navCoords[i][0]], [navCoords[i + 1][1], navCoords[i + 1][0]]);
+  }
+  const remainingText = remaining > 1000 ? (remaining / 1000).toFixed(1) + ' km restantes' : Math.round(remaining) + ' m restantes';
+  const speedText = (speedMs != null && speedMs >= 0) ? ` · ${Math.round(speedMs * 3.6)} km/h` : '';
+  document.getElementById('nav-remaining').textContent = remainingText + speedText;
 }
 
 // ═══════════════════════════════════════════════════════
@@ -872,10 +894,12 @@ function hideAllPanels() {
   });
 }
 function renderEmptyState() {
+  currentView = null;
   hideAllPanels();
   document.getElementById('empty-state').style.display = 'block';
 }
 function mostrarSinResultados(msg) {
+  currentView = null;
   if (window.innerWidth <= 768 && !sidebarOpen) toggleSidebar(true);
   hideAllPanels();
   const el = document.getElementById('generic-list');
@@ -887,11 +911,12 @@ function mostrarSinResultados(msg) {
 // RENDER — DETALLE DE PARADA
 // ═══════════════════════════════════════════════════════
 let currentStationUid = null;
-function mostrarEstacion(station, moverMapa) {
+function mostrarEstacion(station, moverMapa, silent) {
   if (!station) return;
-  if (window.innerWidth <= 768 && !sidebarOpen) toggleSidebar(true);
+  if (!silent && window.innerWidth <= 768 && !sidebarOpen) toggleSidebar(true);
   hideAllPanels();
   currentStationUid = station.uid;
+  currentView = { type: 'station', uid: station.uid };
   const panel = document.getElementById('station-detail');
 
   const isFav = getFavs().some(f => f.uid === station.uid);
@@ -899,6 +924,7 @@ function mostrarEstacion(station, moverMapa) {
     <div class="panel-heading">
       <span>Detalle de parada</span>
       <div class="panel-heading-actions">
+        <button class="btn-panel-action" style="display:inline-flex" onclick="irARutaHacia('${escapeHtml(station.name)}')" title="Cómo llegar">🧭 Ir aquí</button>
         <button class="btn-panel-action share-btn" style="display:inline-flex" onclick="compartirParada(${station.uid})" title="Compartir">🔗</button>
         <button class="btn-panel-action ${isFav ? 'saved' : ''}" style="display:inline-flex" id="btn-fav-station" onclick="toggleFavParada(${station.uid})">
           ${isFav ? '★ Guardada' : '☆ Guardar'}
@@ -947,17 +973,23 @@ function batteryPillHtml(bike) {
 // ═══════════════════════════════════════════════════════
 // RENDER — DETALLE DE BICI
 // ═══════════════════════════════════════════════════════
-function mostrarBici(bike) {
+function mostrarBici(bike, silent) {
   if (!bike) return;
-  if (window.innerWidth <= 768 && !sidebarOpen) toggleSidebar(true);
+  if (!silent && window.innerWidth <= 768 && !sidebarOpen) toggleSidebar(true);
   hideAllPanels();
+  currentView = { type: 'bike', number: bike.number };
   const panel = document.getElementById('bike-detail');
   const station = bike.station;
+  const isFavBike = getFavsBikes().some(f => f.number === bike.number);
   panel.innerHTML = `
     <div class="panel-heading">
       <span>Bicicleta nº ${bike.number}</span>
       <div class="panel-heading-actions">
+        <button class="btn-panel-action" style="display:inline-flex" onclick="irARutaHacia('${escapeHtml(station.name)}')" title="Cómo llegar">🧭 Ir aquí</button>
         <button class="btn-panel-action share-btn" style="display:inline-flex" onclick="compartirBici('${bike.number}')" title="Compartir">🔗</button>
+        <button class="btn-panel-action ${isFavBike ? 'saved' : ''}" style="display:inline-flex" onclick="toggleFavBici('${bike.number}')">
+          ${isFavBike ? '★ Guardada' : '☆ Guardar'}
+        </button>
       </div>
     </div>
     <div class="station-header">
@@ -983,11 +1015,11 @@ function mostrarBici(bike) {
 // ═══════════════════════════════════════════════════════
 // RENDER — LISTAS (varios resultados / modelo)
 // ═══════════════════════════════════════════════════════
-function mostrarListaParadas(list) {
-  if (window.innerWidth <= 768 && !sidebarOpen) toggleSidebar(true);
+function mostrarListaParadas(list, titulo, silent) {
+  if (!silent && window.innerWidth <= 768 && !sidebarOpen) toggleSidebar(true);
   hideAllPanels();
   const el = document.getElementById('generic-list');
-  el.innerHTML = `<div class="panel-heading"><span>Paradas encontradas (${list.length})</span></div>` +
+  el.innerHTML = `<div class="panel-heading"><span>${escapeHtml(titulo || ('Paradas encontradas (' + list.length + ')'))}</span></div>` +
     list.map(s => `
       <div class="station-list-item" onclick="mostrarEstacion(stations.find(x=>x.uid===${s.uid}), true)">
         <span class="badge">${s.bikesAvailable}</span>
@@ -998,8 +1030,8 @@ function mostrarListaParadas(list) {
       </div>`).join('');
   el.style.display = 'block';
 }
-function mostrarListaBicis(list, titulo) {
-  if (window.innerWidth <= 768 && !sidebarOpen) toggleSidebar(true);
+function mostrarListaBicis(list, titulo, silent) {
+  if (!silent && window.innerWidth <= 768 && !sidebarOpen) toggleSidebar(true);
   hideAllPanels();
   const el = document.getElementById('generic-list');
   el.innerHTML = `<div class="panel-heading"><span>${escapeHtml(titulo || ('Bicicletas encontradas (' + list.length + ')'))}</span></div>` +
@@ -1020,16 +1052,29 @@ function bikeCardHtmlWithStation(bike) {
     </div>`;
 }
 
-// Refresca el panel actualmente abierto tras cada actualización de datos
+// Refresca el panel actualmente abierto tras cada actualización de datos,
+// sin tocar nada que el usuario tenga abierto/oculto (barra lateral, mapa, etc.)
+let currentView = null; // {type:'station',uid} | {type:'bike',number} | {type:'city',city} | {type:'model',code}
+
 function refreshOpenPanels() {
-  if (currentStationUid != null && document.getElementById('station-detail').style.display !== 'none') {
-    const station = stations.find(s => s.uid === currentStationUid);
-    if (station) mostrarEstacion(station, false);
+  if (!currentView) return;
+  if (currentView.type === 'station') {
+    const station = stations.find(s => s.uid === currentView.uid);
+    if (station) mostrarEstacion(station, false, true);
+  } else if (currentView.type === 'bike') {
+    const bike = allBikes.find(b => b.number === currentView.number);
+    if (bike) mostrarBici(bike, true);
+  } else if (currentView.type === 'city') {
+    const matches = stations.filter(s => s.city === currentView.city);
+    mostrarListaParadas(matches, `Paradas en ${currentView.city} (${matches.length})`, true);
+  } else if (currentView.type === 'model') {
+    const matches = allBikes.filter(b => b.bikeType === currentView.code);
+    mostrarListaBicis(matches, `Bicicletas ${modelNames[currentView.code] || ('modelo ' + currentView.code)} (${matches.length})`, true);
   }
 }
 
 // ═══════════════════════════════════════════════════════
-// FAVORITOS (paradas)
+// FAVORITOS (paradas, bicis y rutas)
 // ═══════════════════════════════════════════════════════
 function getFavs() {
   try { return JSON.parse(localStorage.getItem('bb_favs') || '[]'); } catch { return []; }
@@ -1048,27 +1093,119 @@ function toggleFavParada(uid) {
   updateFavsUI();
   mostrarEstacion(station, false);
 }
-function updateFavsUI() {
-  const favs = getFavs();
-  const listEl = document.getElementById('favs-list');
-  document.getElementById('no-data-msg').style.display = favs.length ? 'none' : 'block';
-  listEl.querySelectorAll('.fav-item').forEach(el => el.remove());
-  favs.forEach((fav, i) => {
-    const div = document.createElement('div');
-    div.className = 'fav-item';
-    div.innerHTML = `<span class="fav-label">${escapeHtml(fav.name)}</span><button class="fav-del" onclick="event.stopPropagation();removeFav(${i})" title="Eliminar">×</button>`;
-    div.onclick = () => {
-      const station = stations.find(s => s.uid === fav.uid);
-      if (station) mostrarEstacion(station, true);
-    };
-    listEl.appendChild(div);
-  });
-}
 function removeFav(index) {
   const favs = getFavs();
   favs.splice(index, 1);
   setFavs(favs);
   updateFavsUI();
+}
+
+function getFavsBikes() {
+  try { return JSON.parse(localStorage.getItem('bb_favs_bikes') || '[]'); } catch { return []; }
+}
+function setFavsBikes(favs) { localStorage.setItem('bb_favs_bikes', JSON.stringify(favs)); }
+function toggleFavBici(number) {
+  let favs = getFavsBikes();
+  if (favs.some(f => f.number === number)) {
+    favs = favs.filter(f => f.number !== number);
+  } else {
+    favs.push({ number });
+  }
+  setFavsBikes(favs);
+  updateFavsUI();
+  const bike = allBikes.find(b => b.number === number);
+  if (bike) mostrarBici(bike, true);
+}
+function removeFavBici(index) {
+  const favs = getFavsBikes();
+  favs.splice(index, 1);
+  setFavsBikes(favs);
+  updateFavsUI();
+}
+
+function getFavsRoutes() {
+  try { return JSON.parse(localStorage.getItem('bb_favs_routes') || '[]'); } catch { return []; }
+}
+function setFavsRoutes(favs) { localStorage.setItem('bb_favs_routes', JSON.stringify(favs)); }
+function toggleFavRuta(origen, destino) {
+  let favs = getFavsRoutes();
+  const exists = favs.some(f => f.origen === origen && f.destino === destino);
+  if (exists) favs = favs.filter(f => !(f.origen === origen && f.destino === destino));
+  else favs.push({ origen, destino });
+  setFavsRoutes(favs);
+  updateFavsUI();
+  const btn = document.getElementById('btn-fav-ruta');
+  if (btn) {
+    const nowFav = !exists;
+    btn.classList.toggle('saved', nowFav);
+    btn.textContent = nowFav ? '★ Guardada' : '☆ Guardar ruta';
+  }
+}
+function removeFavRuta(index) {
+  const favs = getFavsRoutes();
+  favs.splice(index, 1);
+  setFavsRoutes(favs);
+  updateFavsUI();
+}
+function usarRutaFavorita(origen, destino) {
+  document.querySelectorAll('.tab-btn')[3].click();
+  document.getElementById('ruta-origen').value = origen;
+  document.getElementById('ruta-destino').value = destino;
+  calcularRuta();
+}
+function irARutaHacia(destino) {
+  document.querySelectorAll('.tab-btn')[3].click();
+  document.getElementById('ruta-destino').value = destino;
+  document.getElementById('ruta-origen').focus();
+}
+
+function updateFavsUI() {
+  const favsStations = getFavs();
+  const favsBikes = getFavsBikes();
+  const favsRoutes = getFavsRoutes();
+  const total = favsStations.length + favsBikes.length + favsRoutes.length;
+
+  const header = document.querySelector('.favs-header-title');
+  if (header) header.textContent = `⭐ Favoritos${total ? ' (' + total + ')' : ''}`;
+
+  const listEl = document.getElementById('favs-list');
+  document.getElementById('no-data-msg').style.display = total ? 'none' : 'block';
+  listEl.querySelectorAll('.fav-item').forEach(el => el.remove());
+
+  favsStations.forEach((fav, i) => {
+    const div = document.createElement('div');
+    div.className = 'fav-item';
+    div.innerHTML = `<span class="fav-icon">🅿️</span><span class="fav-label">${escapeHtml(fav.name)}</span><button class="fav-del" onclick="event.stopPropagation();removeFav(${i})" title="Eliminar">×</button>`;
+    div.addEventListener('click', (e) => {
+      if (e.target.closest('.fav-del')) return;
+      const station = stations.find(s => s.uid === fav.uid);
+      if (station) mostrarEstacion(station, true);
+    });
+    listEl.appendChild(div);
+  });
+
+  favsBikes.forEach((fav, i) => {
+    const bike = allBikes.find(b => b.number === fav.number);
+    const div = document.createElement('div');
+    div.className = 'fav-item';
+    div.innerHTML = `<span class="fav-icon">🚲</span><span class="fav-label">Bici nº ${escapeHtml(fav.number)}${bike ? '' : ' <span style="opacity:.6">(no localizada)</span>'}</span><button class="fav-del" onclick="event.stopPropagation();removeFavBici(${i})" title="Eliminar">×</button>`;
+    div.addEventListener('click', (e) => {
+      if (e.target.closest('.fav-del')) return;
+      if (bike) mostrarBici(bike, true);
+    });
+    listEl.appendChild(div);
+  });
+
+  favsRoutes.forEach((fav, i) => {
+    const div = document.createElement('div');
+    div.className = 'fav-item';
+    div.innerHTML = `<span class="fav-icon">🗺️</span><span class="fav-label">${escapeHtml(fav.origen)} → ${escapeHtml(fav.destino)}</span><button class="fav-del" onclick="event.stopPropagation();removeFavRuta(${i})" title="Eliminar">×</button>`;
+    div.addEventListener('click', (e) => {
+      if (e.target.closest('.fav-del')) return;
+      usarRutaFavorita(fav.origen, fav.destino);
+    });
+    listEl.appendChild(div);
+  });
 }
 function toggleFavs() {
   document.getElementById('favs-list').classList.toggle('open');

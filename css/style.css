@@ -307,6 +307,7 @@ body {
 
 .fav-item { display: flex; align-items: center; gap: 8px; padding: 7px 0; border-bottom: 1px solid var(--surface); cursor: pointer; }
 .fav-item:last-child { border-bottom: none; }
+.fav-icon { font-size: 0.85rem; flex-shrink: 0; }
 .fav-label { font-size: 0.84rem; flex: 1; }
 .fav-del { background: none; border: none; color: var(--border); font-size: 1rem; cursor: pointer; padding: 0 4px; transition: color 0.15s; }
 .fav-del:hover { color: var(--accent); }
