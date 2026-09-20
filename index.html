@@ -236,7 +236,7 @@ function makeStationIcon(station) {
   const iconUrl = empty ? ICON_EMPTY : ICON;
   // Las imágenes de origen miden 170x264 px (ratio ≈ 0.644) — mantenemos esa
   // proporción para que el pin no se vea deformado/ensanchado en el mapa.
-  const W = 26, H = Math.round(W * 264 / 170); // 26 x 40
+  const W = 28, H = Math.round(W * 264 / 170); // 28 x 43
   return L.divIcon({
     className: '',
     html: `<div style="position:relative;width:${W}px;height:${H}px;">
@@ -398,18 +398,24 @@ function buscarBici() {
 // ═══════════════════════════════════════════════════════
 // MODELOS
 // ═══════════════════════════════════════════════════════
+const modelNames = {
+  "143": "e-SMARTbike 2.0 RFID",
+  "420": "e-SMARTbike 3 UE SWAP Bafang",
+  "285": "Triciclo"
+};
+
 function renderModelChips() {
   const box = document.getElementById('model-chip-list');
   const codes = Object.keys(bikeTypeCounts).sort((a, b) => bikeTypeCounts[b] - bikeTypeCounts[a]);
   box.innerHTML = codes.map(code =>
-    `<button class="model-chip" onclick="buscarPorModelo('${code}', this)">Modelo ${code} <span style="opacity:.7">(${bikeTypeCounts[code]})</span></button>`
+    `<button class="model-chip" onclick="buscarPorModelo('${code}', this)">${modelNames[code] || ('Modelo ' + code)} <span style="opacity:.7">(${bikeTypeCounts[code]})</span></button>`
   ).join('');
 }
 function buscarPorModelo(code, btnEl) {
   document.querySelectorAll('.model-chip').forEach(c => c.classList.remove('active'));
   if (btnEl) btnEl.classList.add('active');
   const matches = allBikes.filter(b => b.bikeType === code);
-  mostrarListaBicis(matches, `Bicicletas modelo ${code} (${matches.length})`);
+  mostrarListaBicis(matches, `Bicicletas ${modelNames[code] || ('modelo ' + code)} (${matches.length})`);
 }
 
 // ═══════════════════════════════════════════════════════
@@ -425,6 +431,7 @@ function renderEmptyState() {
   document.getElementById('empty-state').style.display = 'block';
 }
 function mostrarSinResultados(msg) {
+  if (window.innerWidth <= 768 && !sidebarOpen) toggleSidebar(true);
   hideAllPanels();
   const el = document.getElementById('generic-list');
   el.innerHTML = `<div class="empty-state"><span class="big">🔍</span>${escapeHtml(msg)}</div>`;
@@ -437,6 +444,7 @@ function mostrarSinResultados(msg) {
 let currentStationUid = null;
 function mostrarEstacion(station, moverMapa) {
   if (!station) return;
+  if (window.innerWidth <= 768 && !sidebarOpen) toggleSidebar(true);
   hideAllPanels();
   currentStationUid = station.uid;
   const panel = document.getElementById('station-detail');
@@ -477,7 +485,7 @@ function bikeCardHtml(bike) {
   return `<div class="bike-card" onclick="mostrarBici(allBikes.find(b=>b.number==='${bike.number}'))">
       <div class="bike-card-top">
         <span class="bike-badge">nº ${bike.number}</span>
-        <span class="bike-card-loc">Modelo ${bike.bikeType}</span>
+        <span class="bike-card-loc">${modelNames[bike.bikeType] || ('Modelo ' + bike.bikeType)}</span>
       </div>
       <div class="bike-card-bottom">
         ${batteryPillHtml(bike)}
@@ -496,6 +504,7 @@ function batteryPillHtml(bike) {
 // ═══════════════════════════════════════════════════════
 function mostrarBici(bike) {
   if (!bike) return;
+  if (window.innerWidth <= 768 && !sidebarOpen) toggleSidebar(true);
   hideAllPanels();
   const panel = document.getElementById('bike-detail');
   const station = bike.station;
@@ -508,7 +517,7 @@ function mostrarBici(bike) {
     </div>
     <div class="station-header">
       <div class="station-name">Bici nº ${bike.number}</div>
-      <div class="station-sub">Modelo ${bike.bikeType} · estado: ${escapeHtml(bike.state || 'desconocido')}</div>
+      <div class="station-sub">${modelNames[bike.bikeType] || ('Modelo ' + bike.bikeType)} · estado: ${escapeHtml(bike.state || 'desconocido')}</div>
       <div class="station-stats">
         <div class="station-stat"><span class="num">${bike.battery != null ? bike.battery + '%' : '—'}</span><span class="lbl">Batería</span></div>
         <div class="station-stat"><span class="num">${bike.range != null ? bike.range : '—'}</span><span class="lbl">Autonomía (km)</span></div>
@@ -530,6 +539,7 @@ function mostrarBici(bike) {
 // RENDER — LISTAS (varios resultados / modelo)
 // ═══════════════════════════════════════════════════════
 function mostrarListaParadas(list) {
+  if (window.innerWidth <= 768 && !sidebarOpen) toggleSidebar(true);
   hideAllPanels();
   const el = document.getElementById('generic-list');
   el.innerHTML = `<div class="panel-heading"><span>Paradas encontradas (${list.length})</span></div>` +
@@ -544,6 +554,7 @@ function mostrarListaParadas(list) {
   el.style.display = 'block';
 }
 function mostrarListaBicis(list, titulo) {
+  if (window.innerWidth <= 768 && !sidebarOpen) toggleSidebar(true);
   hideAllPanels();
   const el = document.getElementById('generic-list');
   el.innerHTML = `<div class="panel-heading"><span>${escapeHtml(titulo || ('Bicicletas encontradas (' + list.length + ')'))}</span></div>` +
@@ -662,12 +673,21 @@ function toggleTheme() {
   if (isDark) { document.documentElement.removeAttribute('data-theme'); localStorage.setItem('bb_theme', 'light'); }
   else { document.documentElement.setAttribute('data-theme', 'dark'); localStorage.setItem('bb_theme', 'dark'); }
 }
-let sidebarOpen = true;
-function toggleSidebar() {
-  sidebarOpen = !sidebarOpen;
+let sidebarOpen = window.innerWidth > 768;
+function toggleSidebar(forceOpen) {
+  if (forceOpen === true) sidebarOpen = true;
+  else if (forceOpen === false) sidebarOpen = false;
+  else sidebarOpen = !sidebarOpen;
+  
   document.getElementById('sidebar').style.display = sidebarOpen ? 'flex' : 'none';
+  document.getElementById('mobile-toggle').textContent = sidebarOpen ? '✖' : '☰';
   setTimeout(() => map.invalidateSize(), 50);
 }
+// Aplicar estado inicial
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('sidebar').style.display = sidebarOpen ? 'flex' : 'none';
+  document.getElementById('mobile-toggle').textContent = sidebarOpen ? '✖' : '☰';
+});
 
 // ═══════════════════════════════════════════════════════
 // ACTUALIZACIÓN / POLLING
