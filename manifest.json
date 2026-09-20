@@ -1,6 +1,6 @@
 {
   "name": "Bizkaibizi Helper",
-  "short_name": "Bizkaibizi",
+  "short_name": "Bizkaibizi Helper",
   "start_url": "./index.html",
   "display": "standalone",
   "background_color": "#ffffff",
