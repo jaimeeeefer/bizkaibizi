@@ -343,7 +343,7 @@ body {
 .leaflet-popup-content { margin: 10px !important; line-height: 1.5; }
 .leaflet-popup-content b { font-family: 'Nunito', sans-serif; font-weight: 700; }
 .leaflet-popup-tip { background: var(--white) !important; }
-.bici-pin-icon { filter: drop-shadow(0 2px 3px rgba(0,0,0,.35)); }
+.bici-pin-icon { /* removed drop-shadow for performance */ }
 .bici-pin-count {
   position: absolute; top: -4px; right: -4px;
   background: var(--ink); color: white; border-radius: 8px;
