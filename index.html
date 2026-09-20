@@ -531,21 +531,33 @@ async function calcularRuta() {
 
   try {
     const ghKey = '366a45ab-910c-45fa-b70d-1a09abf3d745';
-    const url = `https://graphhopper.com/api/1/route?point=${stO.lat},${stO.lng}&point=${stD.lat},${stD.lng}&profile=bike&locale=es&calc_points=true&points_encoded=false&key=${ghKey}`;
+    const ghUrl = `https://graphhopper.com/api/1/route?point=${stO.lat},${stO.lng}&point=${stD.lat},${stD.lng}&profile=bike&locale=es&calc_points=true&points_encoded=false&key=${ghKey}`;
 
-    let fetchUrl = url;
-    let usingOSRM = false;
-    let res = await fetch(url);
-    let data = await res.json();
-    
-    if (res.status === 429 || !data.paths || !data.paths.length) {
-      console.warn("Límite de GraphHopper excedido o error, usando OSRM de respaldo...");
-      usingOSRM = true;
-      const osrmUrl = `https://router.project-osrm.org/route/v1/bicycle/${stO.lng},${stO.lat};${stD.lng},${stD.lat}?overview=full&geometries=geojson&steps=true`;
-      res = await fetch(osrmUrl);
+    let data, routeSource = 'GH';
+    try {
+      let res = await fetch(ghUrl);
       data = await res.json();
-      if (data.code !== 'Ok' || !data.routes || !data.routes.length) {
-        throw new Error("No se pudo calcular la ruta ni con GraphHopper ni con OSRM");
+      if (res.status === 429 || !data.paths || !data.paths.length) throw new Error("GH limit/error");
+    } catch (e) {
+      console.warn("GraphHopper falló, intentando Valhalla...");
+      routeSource = 'VALHALLA';
+      try {
+        const valhallaUrl = `https://valhalla1.openstreetmap.de/route?json=` + encodeURIComponent(JSON.stringify({
+          locations: [{lat: stO.lat, lon: stO.lng}, {lat: stD.lat, lon: stD.lng}],
+          costing: "bicycle", directions_options: { units: "kilometers", language: "es-ES" }
+        }));
+        let res = await fetch(valhallaUrl);
+        data = await res.json();
+        if (!data.trip || !data.trip.legs) throw new Error("Valhalla error");
+      } catch (e2) {
+        console.warn("Valhalla falló, intentando OSRM...");
+        routeSource = 'OSRM';
+        const osrmUrl = `https://router.project-osrm.org/route/v1/bicycle/${stO.lng},${stO.lat};${stD.lng},${stD.lat}?overview=full&geometries=geojson&steps=true`;
+        let res = await fetch(osrmUrl);
+        data = await res.json();
+        if (data.code !== 'Ok' || !data.routes || !data.routes.length) {
+          throw new Error("Error en todos los proveedores de ruta.");
+        }
       }
     }
     
@@ -556,13 +568,40 @@ async function calcularRuta() {
     
     let geojson, distanceKm, durationMin, instructions = [];
     
-    if (!usingOSRM) {
+    if (routeSource === 'GH') {
       const path = data.paths[0];
       geojson = { type: "LineString", coordinates: path.points.coordinates };
       distanceKm = (path.distance / 1000).toFixed(1);
       durationMin = Math.round(path.time / 60000);
       instructions = path.instructions; 
       navCoords = path.points.coordinates;
+      navInstructions = instructions;
+    } else if (routeSource === 'VALHALLA') {
+      const trip = data.trip;
+      const leg = trip.legs[0];
+      
+      // Decodificar polyline precisión 6 de Valhalla
+      let index = 0, lat = 0, lng = 0, coords = [], shift = 0, result = 0, byte = null;
+      while (index < leg.shape.length) {
+        byte = null; shift = 0; result = 0;
+        do { byte = leg.shape.charCodeAt(index++) - 63; result |= (byte & 0x1f) << shift; shift += 5; } while (byte >= 0x20);
+        lat += ((result & 1) ? ~(result >> 1) : (result >> 1));
+        shift = result = 0;
+        do { byte = leg.shape.charCodeAt(index++) - 63; result |= (byte & 0x1f) << shift; shift += 5; } while (byte >= 0x20);
+        lng += ((result & 1) ? ~(result >> 1) : (result >> 1));
+        coords.push([lng / 1e6, lat / 1e6]);
+      }
+      
+      navCoords = coords;
+      geojson = { type: "LineString", coordinates: navCoords };
+      distanceKm = trip.summary.length.toFixed(1);
+      durationMin = Math.round(trip.summary.time / 60);
+      instructions = leg.maneuvers.map(m => ({
+        text: m.instruction,
+        distance: m.length * 1000,
+        sign: 0, 
+        interval: [m.begin_shape_index, m.end_shape_index]
+      }));
       navInstructions = instructions;
     } else {
       const route = data.routes[0];
@@ -575,7 +614,6 @@ async function calcularRuta() {
         sign: 0, 
         interval: [0, 0]
       }));
-      // OSRM geom doesn't strictly map to intervals easily, so we just use the raw coordinates for nav
       navCoords = route.geometry.coordinates;
       navInstructions = instructions;
     }
