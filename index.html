@@ -189,11 +189,13 @@ let markerByUid = {};
 let map = null;
 let routingLayer = null;
 let navWatchId = null;
+let navZoom = 18; // recuerda el zoom que el usuario elija durante la navegación
 let navMarker = null;
 let navInstructions = [];
 let navCoords = [];
 const ICON = '/img/bici-pin.png';
 const ICON_EMPTY = '/img/bici-pin-vacio.png';
+const UBICACION_LABEL = '📍 Tu ubicación';
 
 // ═══════════════════════════════════════════════════════
 // CARGA DE DATOS
@@ -280,6 +282,9 @@ function initMap() {
     attribution: '&copy; OpenStreetMap contributors'
   }).addTo(map);
   markersLayer = L.layerGroup().addTo(map);
+  // Durante la navegación, recuerda el zoom que el usuario elija a mano
+  // (con los botones +/- o pellizcando) en lugar de forzar siempre el mismo.
+  map.on('zoomend', () => { if (navWatchId) navZoom = map.getZoom(); });
 }
 
 function makeStationIcon(station) {
@@ -479,7 +484,30 @@ function renderRouteOptions() {
   const sorted = [...stations].sort((a,b) => a.name.localeCompare(b.name));
   const datalist = document.getElementById('stations-list');
   if (!datalist) return;
-  datalist.innerHTML = sorted.map(s => `<option value="${s.name}"></option>`).join('');
+  datalist.innerHTML = `<option value="${UBICACION_LABEL}"></option>` +
+    sorted.map(s => `<option value="${s.name}"></option>`).join('');
+}
+
+// Resuelve un nombre de parada del selector de ruta a un punto {name, lat, lng}.
+// Admite tanto paradas reales como la opción especial "Tu ubicación" (geolocalización).
+function resolverPuntoRuta(name) {
+  return new Promise((resolve, reject) => {
+    if (name === UBICACION_LABEL) {
+      if (!navigator.geolocation) {
+        reject(new Error('Tu navegador no soporta geolocalización.'));
+        return;
+      }
+      navigator.geolocation.getCurrentPosition(
+        pos => resolve({ name: UBICACION_LABEL, lat: pos.coords.latitude, lng: pos.coords.longitude }),
+        () => reject(new Error('No se pudo obtener tu ubicación. Revisa los permisos de localización del navegador.')),
+        { enableHighAccuracy: true, timeout: 10000 }
+      );
+    } else {
+      const st = stations.find(s => s.name === name);
+      if (st) resolve(st);
+      else reject(new Error('__INVALID__'));
+    }
+  });
 }
 
 function getSignIcon(sign) {
@@ -519,20 +547,22 @@ async function calcularRuta() {
     return;
   }
   
-  const stO = stations.find(s => s.name === nameO);
-  const stD = stations.find(s => s.name === nameD);
-  
-  if (!stO || !stD) {
-    alert("Por favor selecciona paradas válidas de la lista.");
-    return;
-  }
-  
   if (window.innerWidth <= 768 && !sidebarOpen) toggleSidebar(true);
   currentView = null;
   hideAllPanels();
   const panel = document.getElementById('generic-list');
-  panel.innerHTML = `<div class="empty-state"><span class="big">⏳</span>Calculando ruta ciclista óptima...</div>`;
+  panel.innerHTML = `<div class="empty-state"><span class="big">⏳</span>${nameO === UBICACION_LABEL ? 'Obteniendo tu ubicación…' : 'Preparando ruta…'}</div>`;
   panel.style.display = 'block';
+
+  let stO, stD;
+  try {
+    [stO, stD] = await Promise.all([resolverPuntoRuta(nameO), resolverPuntoRuta(nameD)]);
+  } catch (err) {
+    panel.innerHTML = `<div class="empty-state"><span class="big">📍</span>${err.message === '__INVALID__' ? 'Por favor selecciona paradas válidas de la lista.' : escapeHtml(err.message)}</div>`;
+    return;
+  }
+
+  panel.innerHTML = `<div class="empty-state"><span class="big">⏳</span>Calculando ruta ciclista óptima...</div>`;
 
   try {
     const ghKey = '366a45ab-910c-45fa-b70d-1a09abf3d745';
@@ -708,7 +738,7 @@ function toggleCompass() {
     document.getElementById('map').style.transform = `translate(-50%, -50%) rotate(${-lastHeading}deg)`;
     needle.style.transform = `rotate(${-lastHeading}deg)`;
     document.getElementById('map-compass').style.opacity = '1';
-    if (navMarker) map.setView(navMarker.getLatLng(), 19);
+    if (navMarker) map.setView(navMarker.getLatLng(), navZoom);
   }
 }
 
@@ -735,6 +765,7 @@ function iniciarNavegacion() {
     alert("Tu navegador no soporta GPS.");
     return;
   }
+  navZoom = 18;
   
   if (window.innerWidth <= 768) toggleSidebar(false);
   document.getElementById('nav-overlay').style.display = 'block';
@@ -797,7 +828,7 @@ function iniciarNavegacion() {
     }
     
     if (compassLocked) {
-      map.setView([lat, lng], 19, { animate: true });
+      map.setView([lat, lng], navZoom, { animate: true });
     }
     
     actualizarInstruccionVisual(lat, lng, pos.coords.speed);
@@ -1155,8 +1186,9 @@ function usarRutaFavorita(origen, destino) {
 }
 function irARutaHacia(destino) {
   document.querySelectorAll('.tab-btn')[3].click();
+  document.getElementById('ruta-origen').value = UBICACION_LABEL;
   document.getElementById('ruta-destino').value = destino;
-  document.getElementById('ruta-origen').focus();
+  calcularRuta();
 }
 
 function updateFavsUI() {
