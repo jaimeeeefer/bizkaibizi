@@ -7,8 +7,14 @@
   "theme_color": "#F2811D",
   "icons": [
     {
-      "src": "img/bici-pin.png",
-      "sizes": "192x192",
+      "src": "img/logo-512.png",
+      "sizes": "192x192 512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "img/logo-512.png",
+      "sizes": "any",
       "type": "image/png"
     }
   ]

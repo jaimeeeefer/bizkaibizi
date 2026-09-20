@@ -691,6 +691,7 @@ function iniciarNavegacion() {
   
   // Hacer el mapa más grande que la pantalla para que al rotar no se corten las esquinas
   const mapEl = document.getElementById('map');
+  mapEl.style.position = 'absolute';
   mapEl.style.width = '150vw';
   mapEl.style.height = '150vh';
   mapEl.style.left = '-25vw';
@@ -773,6 +774,7 @@ function detenerNavegacion() {
   // Reset map size and rotation
   const mapEl = document.getElementById('map');
   mapEl.style.transform = `rotate(0deg)`;
+  mapEl.style.position = 'static';
   mapEl.style.width = '100%';
   mapEl.style.height = '100%';
   mapEl.style.left = '0';
