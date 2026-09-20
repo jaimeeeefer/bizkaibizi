@@ -471,15 +471,10 @@ async function calcularRuta() {
   panel.style.display = 'block';
 
   try {
-    const ghKey = 'YOUR_GRAPHHOPPER_KEY'; // Reemplaza esto con tu API key de GraphHopper
-    // Para preparar el terreno al 100% como pediste, usamos la API de GraphHopper
+    const ghKey = '366a45ab-910c-45fa-b70d-1a09abf3d745';
     const url = `https://graphhopper.com/api/1/route?point=${stO.lat},${stO.lng}&point=${stD.lat},${stD.lng}&profile=bike&locale=es&calc_points=true&points_encoded=false&key=${ghKey}`;
-    
-    // NOTA: Si no tienes API key válida, usaremos OSRM como fallback temporal para que la UI funcione
-    let fetchUrl = ghKey === '366a45ab-910c-45fa-b70d-1a09abf3d745' ? 
-      `https://router.project-osrm.org/route/v1/bicycle/${stO.lng},${stO.lat};${stD.lng},${stD.lat}?overview=full&geometries=geojson` : url;
 
-    const res = await fetch(fetchUrl);
+    const res = await fetch(url);
     const data = await res.json();
     
     if (routingLayer) {
@@ -489,20 +484,16 @@ async function calcularRuta() {
     
     let geojson, distanceKm, durationMin, instructions = [];
     
-    if (ghKey !== 'YOUR_GRAPHHOPPER_KEY') {
-      if (!data.paths || !data.paths.length) throw new Error("No se pudo calcular la ruta con GraphHopper");
-      const path = data.paths[0];
-      geojson = { type: "LineString", coordinates: path.points.coordinates };
-      distanceKm = (path.distance / 1000).toFixed(1);
-      durationMin = Math.round(path.time / 60000);
-      instructions = path.instructions; // Preparado para la UI de indicaciones paso a paso
-    } else {
-      if (data.code !== 'Ok' || !data.routes || !data.routes.length) throw new Error("No se pudo calcular la ruta con OSRM");
-      const route = data.routes[0];
-      geojson = route.geometry;
-      distanceKm = (route.distance / 1000).toFixed(1);
-      durationMin = Math.round(route.duration / 60);
+    if (!data.paths || !data.paths.length) {
+      console.error(data);
+      throw new Error("No se pudo calcular la ruta con GraphHopper");
     }
+    
+    const path = data.paths[0];
+    geojson = { type: "LineString", coordinates: path.points.coordinates };
+    distanceKm = (path.distance / 1000).toFixed(1);
+    durationMin = Math.round(path.time / 60000);
+    instructions = path.instructions; // Preparado para la UI de indicaciones paso a paso
     
     routingLayer = L.geoJSON(geojson, {
       style: { color: '#0366d6', weight: 5, opacity: 0.8 }
