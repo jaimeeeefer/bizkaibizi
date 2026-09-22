@@ -194,6 +194,15 @@ let navMarker = null;
 let navInstructions = [];
 let navCoords = [];
 let lastMatchedIdx = 0; // progreso a lo largo de la ruta, para no "saltar" a un tramo cercano equivocado
+let navDestino = null;   // {lat, lng, name} del destino actual de la navegación, para poder recalcular la ruta
+let rutaEnCurso = true;  // ¿estamos cerca del camino a seguir ahora mismo?
+let offRouteSince = null; // instante (Date.now()) desde el que estamos alejados del camino, o null
+let recalculando = false;
+// Umbrales de "cerca"/"lejos" del camino a seguir, con histéresis (dos umbrales distintos
+// para entrar y salir) para que no parpadee al ir justo por el límite.
+const ON_ROUTE_M = 25;           // por debajo de esto, se considera que vas por el camino
+const OFF_ROUTE_M = 40;          // por encima de esto, se considera que te has alejado del camino
+const RECALC_DEBOUNCE_MS = 8000; // tiempo alejado del camino antes de recalcular (evita recalcular por saltos puntuales del GPS)
 const ICON = '/img/bici-pin.png';
 const ICON_EMPTY = '/img/bici-pin-vacio.png';
 const UBICACION_LABEL = '📍 Tu ubicación';
@@ -666,6 +675,105 @@ function invertirRuta() {
   d.value = temp;
 }
 
+// Pide la ruta ciclista entre dos puntos {lat, lng} a los proveedores disponibles
+// (GraphHopper → Valhalla → OSRM, por orden) y devuelve un formato común, sin tocar
+// nada del estado de la app. La usan tanto calcularRuta() como recalcularNavegacion().
+async function obtenerRuta(origen, destino) {
+  const ghKey = '366a45ab-910c-45fa-b70d-1a09abf3d745';
+  const valhallaUrl = `https://valhalla1.openstreetmap.de/route?json=` + encodeURIComponent(JSON.stringify({
+    locations: [{lat: origen.lat, lon: origen.lng}, {lat: destino.lat, lon: destino.lng}],
+    costing: "bicycle", directions_options: { units: "kilometers", language: "es-ES" }
+  }));
+  const ghUrl = `https://graphhopper.com/api/1/route?point=${origen.lat},${origen.lng}&point=${destino.lat},${destino.lng}&profile=bike&locale=es&calc_points=true&points_encoded=false&key=${ghKey}`;
+
+  // Orden de proveedores de ruta: GraphHopper (principal) → Valhalla (respaldo, si se
+  // agotan los tokens de GraphHopper) → OSRM (último recurso)
+  let data, routeSource = 'GH';
+  try {
+    let res = await fetch(ghUrl);
+    data = await res.json();
+    if (res.status === 429 || !data.paths || !data.paths.length) throw new Error("GH limit/error");
+  } catch (e) {
+    console.warn("GraphHopper falló, intentando Valhalla...");
+    routeSource = 'VALHALLA';
+    try {
+      let res = await fetch(valhallaUrl);
+      data = await res.json();
+      if (!data.trip || !data.trip.legs) throw new Error("Valhalla error");
+    } catch (e2) {
+      console.warn("Valhalla falló, intentando OSRM...");
+      routeSource = 'OSRM';
+      const osrmUrl = `https://router.project-osrm.org/route/v1/bicycle/${origen.lng},${origen.lat};${destino.lng},${destino.lat}?overview=full&geometries=geojson&steps=true`;
+      let res = await fetch(osrmUrl);
+      data = await res.json();
+      if (data.code !== 'Ok' || !data.routes || !data.routes.length) {
+        throw new Error("Error en todos los proveedores de ruta.");
+      }
+    }
+  }
+
+  let geojson, distanceKm, durationMin, instructions = [], coords;
+
+  if (routeSource === 'GH') {
+    const path = data.paths[0];
+    coords = path.points.coordinates;
+    geojson = { type: "LineString", coordinates: coords };
+    distanceKm = (path.distance / 1000).toFixed(1);
+    durationMin = Math.round(path.time / 60000);
+    instructions = path.instructions;
+  } else if (routeSource === 'VALHALLA') {
+    const trip = data.trip;
+    const leg = trip.legs[0];
+
+    // Decodificar polyline precisión 6 de Valhalla
+    let index = 0, lat = 0, lng = 0, shift = 0, result = 0, byte = null;
+    coords = [];
+    while (index < leg.shape.length) {
+      byte = null; shift = 0; result = 0;
+      do { byte = leg.shape.charCodeAt(index++) - 63; result |= (byte & 0x1f) << shift; shift += 5; } while (byte >= 0x20);
+      lat += ((result & 1) ? ~(result >> 1) : (result >> 1));
+      shift = result = 0;
+      do { byte = leg.shape.charCodeAt(index++) - 63; result |= (byte & 0x1f) << shift; shift += 5; } while (byte >= 0x20);
+      lng += ((result & 1) ? ~(result >> 1) : (result >> 1));
+      coords.push([lng / 1e6, lat / 1e6]);
+    }
+
+    geojson = { type: "LineString", coordinates: coords };
+    distanceKm = trip.summary.length.toFixed(1);
+    durationMin = Math.round(trip.summary.time / 60);
+    instructions = leg.maneuvers.map(m => ({
+      text: m.instruction,
+      distance: m.length * 1000,
+      sign: valhallaSignFromType(m.type),
+      interval: [m.begin_shape_index, m.end_shape_index]
+    }));
+  } else {
+    const route = data.routes[0];
+    geojson = route.geometry;
+    coords = route.geometry.coordinates;
+    distanceKm = (route.distance / 1000).toFixed(1);
+    durationMin = Math.round(route.duration / 60);
+    instructions = route.legs[0].steps.map(s => ({
+      text: s.maneuver.instruction || (s.name ? "Continúa por " + s.name : "Continúa"),
+      distance: s.distance,
+      sign: osrmSignFromManeuver(s.maneuver),
+      interval: [0, 0]
+    }));
+  }
+
+  return { geojson, distanceKm, durationMin, instructions, coords };
+}
+
+// Sustituye la línea azul del mapa por una nueva (usado también al recalcular durante
+// la navegación). ajustarVista=true encuadra el mapa a la ruta entera; durante la
+// navegación se pasa false, para no perder el zoom/centrado que ya tenía el usuario.
+function reemplazarRoutingLayer(geojson, ajustarVista) {
+  const anterior = routingLayer;
+  routingLayer = L.geoJSON(geojson, { style: { color: '#0366d6', weight: 5, opacity: 0.8 } });
+  if (anterior && map.hasLayer(anterior)) map.removeLayer(anterior);
+  syncRouteLayer(ajustarVista);
+}
+
 async function calcularRuta() {
   const nameO = document.getElementById('ruta-origen').value.trim();
   const nameD = document.getElementById('ruta-destino').value.trim();
@@ -698,106 +806,17 @@ async function calcularRuta() {
   setRutaView({ type: 'message', icon: '⏳', text: 'Calculando ruta ciclista óptima...' });
 
   try {
-    const ghKey = '366a45ab-910c-45fa-b70d-1a09abf3d745';
-    const valhallaUrl = `https://valhalla1.openstreetmap.de/route?json=` + encodeURIComponent(JSON.stringify({
-      locations: [{lat: stO.lat, lon: stO.lng}, {lat: stD.lat, lon: stD.lng}],
-      costing: "bicycle", directions_options: { units: "kilometers", language: "es-ES" }
-    }));
-    const ghUrl = `https://graphhopper.com/api/1/route?point=${stO.lat},${stO.lng}&point=${stD.lat},${stD.lng}&profile=bike&locale=es&calc_points=true&points_encoded=false&key=${ghKey}`;
-
-    // Orden de proveedores de ruta: GraphHopper (principal) → Valhalla (respaldo, si se
-    // agotan los tokens de GraphHopper) → OSRM (último recurso)
-    let data, routeSource = 'GH';
-    try {
-      let res = await fetch(ghUrl);
-      data = await res.json();
-      if (res.status === 429 || !data.paths || !data.paths.length) throw new Error("GH limit/error");
-    } catch (e) {
-      console.warn("GraphHopper falló, intentando Valhalla...");
-      routeSource = 'VALHALLA';
-      try {
-        let res = await fetch(valhallaUrl);
-        data = await res.json();
-        if (!data.trip || !data.trip.legs) throw new Error("Valhalla error");
-      } catch (e2) {
-        console.warn("Valhalla falló, intentando OSRM...");
-        routeSource = 'OSRM';
-        const osrmUrl = `https://router.project-osrm.org/route/v1/bicycle/${stO.lng},${stO.lat};${stD.lng},${stD.lat}?overview=full&geometries=geojson&steps=true`;
-        let res = await fetch(osrmUrl);
-        data = await res.json();
-        if (data.code !== 'Ok' || !data.routes || !data.routes.length) {
-          throw new Error("Error en todos los proveedores de ruta.");
-        }
-      }
-    }
-    
+    const { geojson, distanceKm, durationMin, instructions, coords } = await obtenerRuta(stO, stD);
     if (!activa()) return;
 
-    if (routingLayer) {
-      map.removeLayer(routingLayer);
-      routingLayer = null;
-    }
-    
-    let geojson, distanceKm, durationMin, instructions = [];
-    
-    if (routeSource === 'GH') {
-      const path = data.paths[0];
-      geojson = { type: "LineString", coordinates: path.points.coordinates };
-      distanceKm = (path.distance / 1000).toFixed(1);
-      durationMin = Math.round(path.time / 60000);
-      instructions = path.instructions; 
-      navCoords = path.points.coordinates;
-      navInstructions = instructions;
-    } else if (routeSource === 'VALHALLA') {
-      const trip = data.trip;
-      const leg = trip.legs[0];
-      
-      // Decodificar polyline precisión 6 de Valhalla
-      let index = 0, lat = 0, lng = 0, coords = [], shift = 0, result = 0, byte = null;
-      while (index < leg.shape.length) {
-        byte = null; shift = 0; result = 0;
-        do { byte = leg.shape.charCodeAt(index++) - 63; result |= (byte & 0x1f) << shift; shift += 5; } while (byte >= 0x20);
-        lat += ((result & 1) ? ~(result >> 1) : (result >> 1));
-        shift = result = 0;
-        do { byte = leg.shape.charCodeAt(index++) - 63; result |= (byte & 0x1f) << shift; shift += 5; } while (byte >= 0x20);
-        lng += ((result & 1) ? ~(result >> 1) : (result >> 1));
-        coords.push([lng / 1e6, lat / 1e6]);
-      }
-      
-      navCoords = coords;
-      geojson = { type: "LineString", coordinates: navCoords };
-      distanceKm = trip.summary.length.toFixed(1);
-      durationMin = Math.round(trip.summary.time / 60);
-      instructions = leg.maneuvers.map(m => ({
-        text: m.instruction,
-        distance: m.length * 1000,
-        sign: valhallaSignFromType(m.type),
-        interval: [m.begin_shape_index, m.end_shape_index]
-      }));
-      navInstructions = instructions;
-    } else {
-      const route = data.routes[0];
-      geojson = route.geometry;
-      distanceKm = (route.distance / 1000).toFixed(1);
-      durationMin = Math.round(route.duration / 60);
-      instructions = route.legs[0].steps.map(s => ({
-        text: s.maneuver.instruction || (s.name ? "Continúa por " + s.name : "Continúa"),
-        distance: s.distance,
-        sign: osrmSignFromManeuver(s.maneuver),
-        interval: [0, 0]
-      }));
-      navCoords = route.geometry.coordinates;
-      navInstructions = instructions;
-    }
-    
-    routingLayer = L.geoJSON(geojson, {
-      style: { color: '#0366d6', weight: 5, opacity: 0.8 }
-    });
+    navCoords = coords;
+    navInstructions = instructions;
+    navDestino = { lat: stD.lat, lng: stD.lng, name: stD.name }; // para poder recalcular si nos alejamos del camino durante la navegación
+    reemplazarRoutingLayer(geojson, true);
 
     // Se guarda como vista de la pestaña Ruta. La línea del mapa y el panel solo se
     // pintan si el usuario sigue en esa pestaña; si no, se pintarán al volver.
     setRutaView({ type: 'route', origen: stO.name, destino: stD.name, distanceKm, durationMin, instructions });
-    syncRouteLayer(true);
 
   } catch (err) {
     if (!activa()) return;
@@ -949,6 +968,9 @@ function iniciarNavegacion() {
   navZoom = 18;
   lastMatchedIdx = 0;
   lastGpsHeadingTime = 0;
+  rutaEnCurso = true;
+  offRouteSince = null;
+  recalculando = false;
   
   if (window.innerWidth <= 768) toggleSidebar(false);
   document.getElementById('nav-overlay').style.display = 'block';
@@ -1003,11 +1025,21 @@ function iniciarNavegacion() {
     const gpsHeading = pos.coords.heading;
     const speedMs = pos.coords.speed;
 
-    // El rumbo GPS (dirección real de movimiento) es mucho más fiable que la brújula
-    // del móvil, que en muchos dispositivos está mal calibrada y da una orientación
-    // incorrecta. Lo usamos como fuente principal siempre que vayas a una velocidad
-    // mínima; si vas parado o muy despacio, el GPS no puede darlo y cae a la brújula.
-    if (gpsHeading != null && !Number.isNaN(gpsHeading) && (speedMs == null || speedMs > 1)) {
+    const match = localizarEnRuta(lat, lng);
+    const enRuta = actualizarEstadoRuta(match, lat, lng);
+
+    if (enRuta) {
+      // Cerca del camino a seguir: el rumbo queda bloqueado a la dirección de la
+      // línea en ese punto (como un GPS de verdad), en vez de a hacia dónde mira
+      // el móvil o hacia dónde te mueves tú exactamente.
+      const rumboRuta = calcularRumboRuta(match.idx);
+      if (rumboRuta != null) aplicarRumboMapa(rumboRuta);
+    } else if (gpsHeading != null && !Number.isNaN(gpsHeading) && (speedMs == null || speedMs > 1)) {
+      // Lejos del camino (o aún sin ruta calculada): el rumbo GPS (dirección real de
+      // movimiento) es más fiable que la brújula del móvil, que en muchos dispositivos
+      // está mal calibrada. Se usa siempre que vayas a una velocidad mínima; si vas
+      // parado o muy despacio, el GPS no puede darlo y cae a la brújula (más abajo,
+      // en handleOrientation, que sigue escuchando en segundo plano).
       lastGpsHeadingTime = Date.now();
       aplicarRumboMapa(gpsHeading);
     }
@@ -1022,16 +1054,116 @@ function iniciarNavegacion() {
       map.setView([lat, lng], navZoom, { animate: true });
     }
     
-    actualizarInstruccionVisual(lat, lng, speedMs);
+    if (match && !recalculando) actualizarInstruccionVisual(lat, lng, speedMs, match.idx);
     
   }, (err) => {
     console.error("GPS Error", err);
   }, { enableHighAccuracy: true });
 }
 
+// Busca el punto de la ruta más cercano a (lat, lng), buscando solo desde donde ya
+// íbamos hacia delante (con un pequeño margen hacia atrás por si el GPS da un salto).
+// Devuelve {idx, dist} o null si aún no hay ninguna ruta calculada.
+function localizarEnRuta(lat, lng) {
+  if (!navCoords.length) return null;
+  const BACK_MARGIN = 5;
+  const searchStart = Math.max(0, lastMatchedIdx - BACK_MARGIN);
+  let minDist = Infinity, closestIdx = searchStart;
+  for (let i = searchStart; i < navCoords.length; i++) {
+    const d = map.distance([lat, lng], [navCoords[i][1], navCoords[i][0]]);
+    if (d < minDist) { minDist = d; closestIdx = i; }
+  }
+  lastMatchedIdx = closestIdx;
+  return { idx: closestIdx, dist: minDist };
+}
+
+// Decide si vamos por el camino o nos hemos alejado de él, con histéresis (dos
+// umbrales) para no parpadear justo en el límite, y dispara el recálculo de la ruta
+// si llevamos ya un rato alejados. Devuelve true/false: ¿el rumbo debe seguir la ruta?
+function actualizarEstadoRuta(match, lat, lng) {
+  if (!match) return false; // no debería pasar durante la navegación, pero por si acaso
+  if (match.dist <= ON_ROUTE_M) {
+    rutaEnCurso = true;
+    offRouteSince = null;
+  } else if (match.dist > OFF_ROUTE_M) {
+    rutaEnCurso = false;
+    if (offRouteSince == null) {
+      offRouteSince = Date.now();
+    } else if (!recalculando && Date.now() - offRouteSince >= RECALC_DEBOUNCE_MS) {
+      recalcularNavegacion(lat, lng);
+    }
+  }
+  // Entre ON_ROUTE_M y OFF_ROUTE_M se mantiene el estado anterior, así no oscila.
+  return rutaEnCurso;
+}
+
+// Rumbo (0-360°) de la línea de la ruta en el punto idx, mirando un poco hacia
+// delante para suavizarlo (si no, en tramos muy cortos el rumbo saltaría a trompicones).
+function calcularRumboRuta(idx) {
+  if (navCoords.length < 2) return null;
+  if (idx >= navCoords.length - 1) {
+    const a = navCoords[Math.max(0, navCoords.length - 2)], b = navCoords[navCoords.length - 1];
+    return bearingEntrePuntos(a[1], a[0], b[1], b[0]);
+  }
+  const LOOKAHEAD_M = 15;
+  let i = idx, acumulado = 0;
+  while (i < navCoords.length - 1 && acumulado < LOOKAHEAD_M) {
+    acumulado += map.distance([navCoords[i][1], navCoords[i][0]], [navCoords[i + 1][1], navCoords[i + 1][0]]);
+    i++;
+  }
+  const a = navCoords[idx], b = navCoords[i];
+  return bearingEntrePuntos(a[1], a[0], b[1], b[0]);
+}
+
+// Rumbo inicial (0=norte, sentido horario) entre dos puntos, en grados.
+function bearingEntrePuntos(lat1, lng1, lat2, lng2) {
+  if (lat1 === lat2 && lng1 === lng2) return null;
+  const toRad = d => d * Math.PI / 180, toDeg = r => r * 180 / Math.PI;
+  const y = Math.sin(toRad(lng2 - lng1)) * Math.cos(toRad(lat2));
+  const x = Math.cos(toRad(lat1)) * Math.sin(toRad(lat2)) - Math.sin(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.cos(toRad(lng2 - lng1));
+  return (toDeg(Math.atan2(y, x)) + 360) % 360;
+}
+
+// Recalcula la ruta desde donde estás ahora (lat, lng) hasta el destino original,
+// como haría un GPS de verdad al salirte del camino. Si falla (sin red, proveedores
+// caídos...), la navegación sigue con la brújula del móvil (el mismo mecanismo que
+// ya se usa mientras se recalcula o si nunca llega a estar cerca de una ruta).
+async function recalcularNavegacion(lat, lng) {
+  if (recalculando || !navDestino) return;
+  recalculando = true;
+  document.getElementById('nav-icon').textContent = '🔄';
+  document.getElementById('nav-text').textContent = 'Recalculando ruta…';
+  document.getElementById('nav-dist').textContent = '';
+
+  try {
+    const origen = { lat, lng, name: 'Tu ubicación actual' };
+    const { geojson, distanceKm, durationMin, instructions, coords } = await obtenerRuta(origen, navDestino);
+    if (!navWatchId) return; // se paró la navegación mientras se recalculaba
+
+    navCoords = coords;
+    navInstructions = instructions;
+    lastMatchedIdx = 0;
+    rutaEnCurso = true;
+    offRouteSince = null;
+    reemplazarRoutingLayer(geojson, false); // false: no reencuadrar, para no perder el zoom de navegación
+    setRutaView({ type: 'route', origen: origen.name, destino: navDestino.name, distanceKm, durationMin, instructions });
+  } catch (e) {
+    console.error('No se pudo recalcular la ruta', e);
+    // Se reintentará pasado otro RECALC_DEBOUNCE_MS si seguimos alejados del camino;
+    // mientras tanto, el rumbo sigue guiándose por el GPS/brújula del móvil.
+    offRouteSince = Date.now();
+    document.getElementById('nav-text').textContent = 'No se pudo recalcular la ruta';
+  } finally {
+    recalculando = false;
+  }
+}
+
 function detenerNavegacion() {
   if (navWatchId) navigator.geolocation.clearWatch(navWatchId);
   navWatchId = null;
+  navDestino = null;
+  offRouteSince = null;
+  recalculando = false;
   if (navMarker) {
     map.removeLayer(navMarker);
     navMarker = null;
@@ -1057,23 +1189,9 @@ function detenerNavegacion() {
   map.dragging.enable();
 }
 
-function actualizarInstruccionVisual(lat, lng, speedMs) {
+function actualizarInstruccionVisual(lat, lng, speedMs, closestIdx) {
   if (!navCoords.length || !navInstructions.length) return;
-  
-  // Buscamos el punto de la ruta más cercano, pero solo desde donde ya íbamos hacia
-  // delante (con un pequeño margen hacia atrás por si el GPS da un salto). Buscar en
-  // toda la ruta hacía que, cerca de rotondas o calles paralelas, se "saltara" a un
-  // tramo físicamente cercano pero equivocado y diera una indicación incorrecta.
-  const BACK_MARGIN = 5;
-  const searchStart = Math.max(0, lastMatchedIdx - BACK_MARGIN);
-  let minDist = Infinity;
-  let closestIdx = searchStart;
-  for (let i = searchStart; i < navCoords.length; i++) {
-    const d = map.distance([lat, lng], [navCoords[i][1], navCoords[i][0]]);
-    if (d < minDist) { minDist = d; closestIdx = i; }
-  }
-  lastMatchedIdx = closestIdx;
-  
+
   let currentInst = navInstructions[0];
   let nextInst = null;
   
