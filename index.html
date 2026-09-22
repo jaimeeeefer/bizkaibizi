@@ -193,6 +193,7 @@ let navZoom = 18; // recuerda el zoom que el usuario elija durante la navegació
 let navMarker = null;
 let navInstructions = [];
 let navCoords = [];
+let lastMatchedIdx = 0; // progreso a lo largo de la ruta, para no "saltar" a un tramo cercano equivocado
 const ICON = '/img/bici-pin.png';
 const ICON_EMPTY = '/img/bici-pin-vacio.png';
 const UBICACION_LABEL = '📍 Tu ubicación';
@@ -285,6 +286,10 @@ function initMap() {
   // Durante la navegación, recuerda el zoom que el usuario elija a mano
   // (con los botones +/- o pellizcando) en lugar de forzar siempre el mismo.
   map.on('zoomend', () => { if (navWatchId) navZoom = map.getZoom(); });
+  // Si el usuario arrastra el mapa a mano mientras navega con la brújula puesta,
+  // dejamos de seguirle automáticamente (igual que Google Maps): el propio botón
+  // de la brújula, atenuado, sirve para volver a centrar y bloquear el rumbo.
+  map.on('dragstart', () => { if (navWatchId && compassLocked) toggleCompass(); });
 }
 
 function makeStationIcon(station) {
@@ -850,6 +855,11 @@ function limpiarRuta() {
 let compassLocked = true;
 let lastHeading = 0;
 let orientationHandler = null;
+// Preferimos el rumbo GPS (dirección real de movimiento) sobre la brújula del móvil,
+// que en muchos dispositivos está mal calibrada. Solo usamos la brújula si hace más
+// de este tiempo que no recibimos un rumbo GPS fiable (vas parado o muy despacio).
+let lastGpsHeadingTime = 0;
+const GPS_HEADING_TIMEOUT_MS = 4000;
 
 function toggleCompass() {
   compassLocked = !compassLocked;
@@ -857,18 +867,38 @@ function toggleCompass() {
   if (!compassLocked) {
     document.getElementById('map').style.transform = `translate(-50%, -50%) rotate(0deg)`;
     needle.style.transform = `rotate(0deg)`;
-    map.dragging.enable();
     document.getElementById('map-compass').style.opacity = '0.7';
+    actualizarFlechaUsuario(lastHeading);
   } else {
-    map.dragging.disable();
-    document.getElementById('map').style.transform = `translate(-50%, -50%) rotate(${-lastHeading}deg)`;
-    needle.style.transform = `rotate(${-lastHeading}deg)`;
+    aplicarRumboMapa(lastHeading);
     document.getElementById('map-compass').style.opacity = '1';
     if (navMarker) map.setView(navMarker.getLatLng(), navZoom);
   }
 }
 
+// Aplica un rumbo (en grados) a la rotación del mapa y de la aguja de la brújula.
+function aplicarRumboMapa(heading) {
+  lastHeading = heading;
+  actualizarFlechaUsuario(heading);
+  if (!compassLocked) return;
+  document.getElementById('map').style.transform = `translate(-50%, -50%) rotate(${-heading}deg)`;
+  document.getElementById('compass-needle').style.transform = `rotate(${-heading}deg)`;
+}
+
+// Orienta la flecha del usuario en el mapa. Con la brújula bloqueada el mapa ya gira
+// para que "arriba" sea tu dirección real, así que la flecha se queda fija apuntando
+// arriba; si el mapa está fijo al norte, la flecha rota para señalar hacia dónde vas.
+function actualizarFlechaUsuario(heading) {
+  const arrow = document.getElementById('nav-arrow');
+  if (!arrow) return;
+  arrow.style.transform = compassLocked ? 'rotate(0deg)' : `rotate(${heading}deg)`;
+}
+
+// Rumbo por brújula/magnetómetro del móvil. Muchos móviles la tienen mal calibrada,
+// así que solo la usamos si el GPS no nos ha dado hace poco un rumbo fiable propio
+// (deducido del movimiento real, ver watchPosition más abajo).
 function handleOrientation(e) {
+  if (Date.now() - lastGpsHeadingTime < GPS_HEADING_TIMEOUT_MS) return;
   let heading = null;
   if (e.webkitCompassHeading != null) {
     heading = e.webkitCompassHeading;
@@ -876,14 +906,7 @@ function handleOrientation(e) {
     // Android device orientation (alpha is usually 360 - heading)
     heading = 360 - e.alpha;
   }
-  
-  if (heading != null) {
-    lastHeading = heading;
-    if (compassLocked) {
-      document.getElementById('map').style.transform = `translate(-50%, -50%) rotate(${-heading}deg)`;
-      document.getElementById('compass-needle').style.transform = `rotate(${-heading}deg)`;
-    }
-  }
+  if (heading != null) aplicarRumboMapa(heading);
 }
 
 function iniciarNavegacion() {
@@ -892,6 +915,8 @@ function iniciarNavegacion() {
     return;
   }
   navZoom = 18;
+  lastMatchedIdx = 0;
+  lastGpsHeadingTime = 0;
   
   if (window.innerWidth <= 768) toggleSidebar(false);
   document.getElementById('nav-overlay').style.display = 'block';
@@ -908,7 +933,6 @@ function iniciarNavegacion() {
   map.invalidateSize();
   
   compassLocked = true;
-  map.dragging.disable();
   document.getElementById('map').style.transition = 'transform 0.1s linear';
   
   // Solicitar permiso de brujula en iOS
@@ -925,26 +949,35 @@ function iniciarNavegacion() {
     orientationHandler = handleOrientation;
   }
   
-  // Custom blue dot for user
+  // Flecha de usuario (en vez de un simple puntito): un círculo con un triángulo que
+  // señala hacia delante. Cuando el mapa gira con la brújula, la flecha se queda fija
+  // apuntando arriba (ya coincide con tu dirección real); si desbloqueas la brújula
+  // (mapa fijo al norte), la flecha rota para mostrar hacia dónde te mueves.
   const dotIcon = L.divIcon({
     className: '',
-    html: `<div style="width:18px;height:18px;background:#2A81CB;border:3px solid white;border-radius:50%;box-shadow:0 0 6px rgba(0,0,0,0.5);"></div>`,
-    iconSize: [18, 18],
-    iconAnchor: [9, 9]
+    html: `<div id="nav-arrow" style="width:26px;height:26px;transition:transform 0.2s linear;">
+             <svg viewBox="0 0 24 24" width="26" height="26">
+               <circle cx="12" cy="12" r="10.5" fill="#2A81CB" stroke="white" stroke-width="2"/>
+               <path d="M12 5 L17.5 16 L12 13 L6.5 16 Z" fill="white"/>
+             </svg>
+           </div>`,
+    iconSize: [26, 26],
+    iconAnchor: [13, 13]
   });
 
   navWatchId = navigator.geolocation.watchPosition((pos) => {
     const lat = pos.coords.latitude;
     const lng = pos.coords.longitude;
-    // Fallback a heading del GPS si el deviceorientation no emite o está moviéndose rápido
     const gpsHeading = pos.coords.heading;
-    
-    if (gpsHeading != null && !orientationHandler) {
-      lastHeading = gpsHeading;
-      if (compassLocked) {
-        document.getElementById('map').style.transform = `translate(-50%, -50%) rotate(${-gpsHeading}deg)`;
-        document.getElementById('compass-needle').style.transform = `rotate(${-gpsHeading}deg)`;
-      }
+    const speedMs = pos.coords.speed;
+
+    // El rumbo GPS (dirección real de movimiento) es mucho más fiable que la brújula
+    // del móvil, que en muchos dispositivos está mal calibrada y da una orientación
+    // incorrecta. Lo usamos como fuente principal siempre que vayas a una velocidad
+    // mínima; si vas parado o muy despacio, el GPS no puede darlo y cae a la brújula.
+    if (gpsHeading != null && !Number.isNaN(gpsHeading) && (speedMs == null || speedMs > 1)) {
+      lastGpsHeadingTime = Date.now();
+      aplicarRumboMapa(gpsHeading);
     }
     
     if (!navMarker) {
@@ -957,7 +990,7 @@ function iniciarNavegacion() {
       map.setView([lat, lng], navZoom, { animate: true });
     }
     
-    actualizarInstruccionVisual(lat, lng, pos.coords.speed);
+    actualizarInstruccionVisual(lat, lng, speedMs);
     
   }, (err) => {
     console.error("GPS Error", err);
@@ -995,16 +1028,19 @@ function detenerNavegacion() {
 function actualizarInstruccionVisual(lat, lng, speedMs) {
   if (!navCoords.length || !navInstructions.length) return;
   
+  // Buscamos el punto de la ruta más cercano, pero solo desde donde ya íbamos hacia
+  // delante (con un pequeño margen hacia atrás por si el GPS da un salto). Buscar en
+  // toda la ruta hacía que, cerca de rotondas o calles paralelas, se "saltara" a un
+  // tramo físicamente cercano pero equivocado y diera una indicación incorrecta.
+  const BACK_MARGIN = 5;
+  const searchStart = Math.max(0, lastMatchedIdx - BACK_MARGIN);
   let minDist = Infinity;
-  let closestIdx = 0;
-  
-  navCoords.forEach((coord, i) => {
-    const d = map.distance([lat, lng], [coord[1], coord[0]]);
-    if (d < minDist) {
-      minDist = d;
-      closestIdx = i;
-    }
-  });
+  let closestIdx = searchStart;
+  for (let i = searchStart; i < navCoords.length; i++) {
+    const d = map.distance([lat, lng], [navCoords[i][1], navCoords[i][0]]);
+    if (d < minDist) { minDist = d; closestIdx = i; }
+  }
+  lastMatchedIdx = closestIdx;
   
   let currentInst = navInstructions[0];
   let nextInst = null;
