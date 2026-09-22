@@ -705,21 +705,22 @@ async function calcularRuta() {
     }));
     const ghUrl = `https://graphhopper.com/api/1/route?point=${stO.lat},${stO.lng}&point=${stD.lat},${stD.lng}&profile=bike&locale=es&calc_points=true&points_encoded=false&key=${ghKey}`;
 
-    // Orden de proveedores de ruta: Valhalla (principal) → GraphHopper (respaldo) → OSRM (último recurso)
-    let data, routeSource = 'VALHALLA';
+    // Orden de proveedores de ruta: GraphHopper (principal) → Valhalla (respaldo, si se
+    // agotan los tokens de GraphHopper) → OSRM (último recurso)
+    let data, routeSource = 'GH';
     try {
-      let res = await fetch(valhallaUrl);
+      let res = await fetch(ghUrl);
       data = await res.json();
-      if (!data.trip || !data.trip.legs) throw new Error("Valhalla error");
+      if (res.status === 429 || !data.paths || !data.paths.length) throw new Error("GH limit/error");
     } catch (e) {
-      console.warn("Valhalla falló, intentando GraphHopper...");
-      routeSource = 'GH';
+      console.warn("GraphHopper falló, intentando Valhalla...");
+      routeSource = 'VALHALLA';
       try {
-        let res = await fetch(ghUrl);
+        let res = await fetch(valhallaUrl);
         data = await res.json();
-        if (res.status === 429 || !data.paths || !data.paths.length) throw new Error("GH limit/error");
+        if (!data.trip || !data.trip.legs) throw new Error("Valhalla error");
       } catch (e2) {
-        console.warn("GraphHopper falló, intentando OSRM...");
+        console.warn("Valhalla falló, intentando OSRM...");
         routeSource = 'OSRM';
         const osrmUrl = `https://router.project-osrm.org/route/v1/bicycle/${stO.lng},${stO.lat};${stD.lng},${stD.lat}?overview=full&geometries=geojson&steps=true`;
         let res = await fetch(osrmUrl);
