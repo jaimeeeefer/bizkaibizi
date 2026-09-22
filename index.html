@@ -612,6 +612,36 @@ function resolverPuntoRuta(name) {
   });
 }
 
+// Traducen el tipo de maniobra de Valhalla/OSRM a la misma escala de "sign" que usa
+// GraphHopper (-3..3 giros, 0 recto, 4 fin, 6 rotonda), para que el icono de la
+// indicación sea correcto también con estos proveedores.
+function valhallaSignFromType(type) {
+  const map = {
+    4: 4, 5: 4, 6: 4,       // llegada / destino
+    9: 1, 10: 2, 11: 3,     // slight right / right / sharp right
+    14: -3, 15: -2, 16: -1, // sharp left / left / slight left
+    12: 3, 13: -3,          // u-turn (aprox. como giro cerrado)
+    18: 1, 19: -1, 20: 2, 21: -2, 23: 1, 24: -1,
+    26: 6, 27: 0,           // rotonda: entrada / salida
+  };
+  return map[type] ?? 0;
+}
+function osrmSignFromManeuver(maneuver) {
+  if (maneuver.type === 'arrive') return 4;
+  if (maneuver.type === 'roundabout' || maneuver.type === 'rotary' ||
+      maneuver.type === 'roundabout turn' || maneuver.type === 'exit roundabout' || maneuver.type === 'exit rotary') return 6;
+  switch (maneuver.modifier) {
+    case 'sharp left': return -3;
+    case 'left': return -2;
+    case 'slight left': return -1;
+    case 'slight right': return 1;
+    case 'right': return 2;
+    case 'sharp right': return 3;
+    case 'uturn': return -3;
+    default: return 0; // 'straight' u otros
+  }
+}
+
 function getSignIcon(sign) {
   switch(sign) {
     case -3: return '↖️'; // sharp left
@@ -669,26 +699,27 @@ async function calcularRuta() {
 
   try {
     const ghKey = '366a45ab-910c-45fa-b70d-1a09abf3d745';
+    const valhallaUrl = `https://valhalla1.openstreetmap.de/route?json=` + encodeURIComponent(JSON.stringify({
+      locations: [{lat: stO.lat, lon: stO.lng}, {lat: stD.lat, lon: stD.lng}],
+      costing: "bicycle", directions_options: { units: "kilometers", language: "es-ES" }
+    }));
     const ghUrl = `https://graphhopper.com/api/1/route?point=${stO.lat},${stO.lng}&point=${stD.lat},${stD.lng}&profile=bike&locale=es&calc_points=true&points_encoded=false&key=${ghKey}`;
 
-    let data, routeSource = 'GH';
+    // Orden de proveedores de ruta: Valhalla (principal) → GraphHopper (respaldo) → OSRM (último recurso)
+    let data, routeSource = 'VALHALLA';
     try {
-      let res = await fetch(ghUrl);
+      let res = await fetch(valhallaUrl);
       data = await res.json();
-      if (res.status === 429 || !data.paths || !data.paths.length) throw new Error("GH limit/error");
+      if (!data.trip || !data.trip.legs) throw new Error("Valhalla error");
     } catch (e) {
-      console.warn("GraphHopper falló, intentando Valhalla...");
-      routeSource = 'VALHALLA';
+      console.warn("Valhalla falló, intentando GraphHopper...");
+      routeSource = 'GH';
       try {
-        const valhallaUrl = `https://valhalla1.openstreetmap.de/route?json=` + encodeURIComponent(JSON.stringify({
-          locations: [{lat: stO.lat, lon: stO.lng}, {lat: stD.lat, lon: stD.lng}],
-          costing: "bicycle", directions_options: { units: "kilometers", language: "es-ES" }
-        }));
-        let res = await fetch(valhallaUrl);
+        let res = await fetch(ghUrl);
         data = await res.json();
-        if (!data.trip || !data.trip.legs) throw new Error("Valhalla error");
+        if (res.status === 429 || !data.paths || !data.paths.length) throw new Error("GH limit/error");
       } catch (e2) {
-        console.warn("Valhalla falló, intentando OSRM...");
+        console.warn("GraphHopper falló, intentando OSRM...");
         routeSource = 'OSRM';
         const osrmUrl = `https://router.project-osrm.org/route/v1/bicycle/${stO.lng},${stO.lat};${stD.lng},${stD.lat}?overview=full&geometries=geojson&steps=true`;
         let res = await fetch(osrmUrl);
@@ -739,7 +770,7 @@ async function calcularRuta() {
       instructions = leg.maneuvers.map(m => ({
         text: m.instruction,
         distance: m.length * 1000,
-        sign: 0, 
+        sign: valhallaSignFromType(m.type),
         interval: [m.begin_shape_index, m.end_shape_index]
       }));
       navInstructions = instructions;
@@ -751,7 +782,7 @@ async function calcularRuta() {
       instructions = route.legs[0].steps.map(s => ({
         text: s.maneuver.instruction || (s.name ? "Continúa por " + s.name : "Continúa"),
         distance: s.distance,
-        sign: 0, 
+        sign: osrmSignFromManeuver(s.maneuver),
         interval: [0, 0]
       }));
       navCoords = route.geometry.coordinates;
