@@ -453,10 +453,25 @@ function filtrarParadas(q) {
 function syncRouteLayer(fit) {
   if (!routingLayer || !map) return;
   const onRoute = currentTab === 'ruta' && tabViews.ruta && tabViews.ruta.type === 'route';
+
   if (onRoute || navWatchId) {
+    // La línea debe estar añadida antes de encuadrar el mapa.
     if (!map.hasLayer(routingLayer)) {
       routingLayer.addTo(map);
-      if (fit && onRoute) map.fitBounds(routingLayer.getBounds(), { padding: [50, 50] });
+    }
+
+    // Al calcular una ruta, encuadra el mapa alrededor de todo el recorrido,
+    // mostrando origen, destino y la línea completa.
+    if (fit && onRoute) {
+      const bounds = routingLayer.getBounds();
+      if (bounds.isValid()) {
+        map.fitBounds(bounds, {
+          paddingTopLeft: [55, 55],
+          paddingBottomRight: [55, 55],
+          maxZoom: 16,
+          animate: true
+        });
+      }
     }
   } else if (map.hasLayer(routingLayer)) {
     map.removeLayer(routingLayer);
@@ -884,11 +899,14 @@ async function calcularRuta() {
     navCoords = coords;
     navInstructions = instructions;
     navDestino = { lat: stD.lat, lng: stD.lng, name: stD.name }; // para poder recalcular si nos alejamos del camino durante la navegación
-    reemplazarRoutingLayer(geojson, true);
 
-    // Se guarda como vista de la pestaña Ruta. La línea del mapa y el panel solo se
-    // pintan si el usuario sigue en esa pestaña; si no, se pintarán al volver.
+    // Primero guardamos la vista como ruta. Así syncRouteLayer() sabe que estamos
+    // en la pestaña Ruta cuando crea la línea azul y puede encuadrar el mapa.
     setRutaView({ type: 'route', origen: stO.name, destino: stD.name, distanceKm, durationMin, instructions });
+
+    // Dibuja la ruta y centra automáticamente el mapa para mostrar el recorrido
+    // completo entre origen y destino.
+    reemplazarRoutingLayer(geojson, true);
 
   } catch (err) {
     if (!activa()) return;
