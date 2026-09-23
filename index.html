@@ -900,7 +900,7 @@ let navDestination = null;
 let lastNavPosition = null;
 const ROUTE_FOLLOW_MAX_DISTANCE = 35; // m: por debajo, seguimos la ruta
 const OFF_ROUTE_DISTANCE = 70;         // m: por encima, consideramos que se salió
-const REROUTE_COOLDOWN_MS = 8000;
+const REROUTE_COOLDOWN_MS = 10000;
 const ROUTE_HEADING_LOOKAHEAD = 20;    // m aprox. para calcular el rumbo de la línea
 
 function normalizarRumbo(deg) {
@@ -1283,6 +1283,11 @@ function iniciarNavegacion() {
         if (!compassLocked && gpsHeading != null && !Number.isNaN(gpsHeading) && (speedMs == null || speedMs > 1)) {
           aplicarRumboMapa(gpsHeading);
         }
+      } else {
+        // Zona intermedia (35-70 m): todavía no sabemos si te has salido de la ruta
+        // de verdad, así que no tocamos el rumbo, pero seguimos centrando la cámara
+        // para que el mapa no se quede "congelado" mientras te sigues moviendo.
+        if (compassLocked) map.setView([lat, lng], navZoom, { animate: true });
       }
     } else if (!navOffRoute) {
       ponerModoFueraDeRuta();
