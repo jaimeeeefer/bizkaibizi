@@ -105,11 +105,17 @@
         <div style="position: relative;">
           <div class="search-input-row" style="position:relative">
             <span class="search-icon">🟢</span>
-            <input list="stations-list" id="ruta-origen" class="route-select" placeholder="Selecciona origen..." autocomplete="off" style="padding-right: 40px;">
+            <input list="stations-list" id="ruta-origen" class="route-select" placeholder="Selecciona origen..." autocomplete="off" style="padding-right: 40px;"
+                   oninput="onRutaInput('origen')" onfocus="onRutaInput('origen')"
+                   onblur="setTimeout(()=>closeAutocomplete('route-origen-autocomplete'),200)">
+            <div id="route-origen-autocomplete"></div>
           </div>
           <div class="search-input-row" style="position:relative; margin-top: 8px;">
             <span class="search-icon">🔴</span>
-            <input list="stations-list" id="ruta-destino" class="route-select" placeholder="Selecciona destino..." autocomplete="off" style="padding-right: 40px;">
+            <input list="stations-list" id="ruta-destino" class="route-select" placeholder="Selecciona destino..." autocomplete="off" style="padding-right: 40px;"
+                   oninput="onRutaInput('destino')" onfocus="onRutaInput('destino')"
+                   onblur="setTimeout(()=>closeAutocomplete('route-destino-autocomplete'),200)">
+            <div id="route-destino-autocomplete"></div>
           </div>
           <button class="swap-btn" onclick="invertirRuta()" title="Invertir">⇅</button>
         </div>
@@ -565,6 +571,48 @@ function buscarBici() {
   if (matches.length === 1) mostrarBici(matches[0]);
   else if (matches.length > 1) { tabViews.bici = { type: 'bikeSearch', q }; mostrarListaBicis(matches); }
   else mostrarSinResultados('No se ha encontrado ninguna bicicleta con ese número.');
+}
+
+// ═══════════════════════════════════════════════════════
+// AUTOCOMPLETE — RUTA (origen / destino)
+// ═══════════════════════════════════════════════════════
+// Los campos de ruta ya tienen una datalist nativa (útil en Chrome/Android, donde el
+// propio navegador ofrece las opciones encima del teclado), pero no todos los
+// navegadores la muestran (p.ej. Firefox para Android no la ofrece en absoluto). Por
+// eso, igual que en parada/bici, se añade también el cuadro propio de sugerencias de
+// la app, que funciona siempre pase lo que pase con el navegador.
+function quitarAcentos(str) {
+  return str.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+function onRutaInput(cual) {
+  const inputId = cual === 'origen' ? 'ruta-origen' : 'ruta-destino';
+  const boxId = cual === 'origen' ? 'route-origen-autocomplete' : 'route-destino-autocomplete';
+  const qOriginal = document.getElementById(inputId).value.trim().toLowerCase();
+  const q = quitarAcentos(qOriginal);
+  const box = document.getElementById(boxId);
+
+  let html = '';
+  // "Tu ubicación" se ofrece si el campo está vacío (para poder elegirla nada más
+  // entrar, como haría la datalist nativa al tocar un campo vacío) o si lo escrito
+  // coincide con ella, con o sin tildes.
+  if (!q || quitarAcentos(UBICACION_LABEL.toLowerCase()).includes(q)) {
+    html += `<div class="autocomplete-item" onmousedown="seleccionarRuta('${cual}','${escapeHtml(UBICACION_LABEL)}')"><b>${escapeHtml(UBICACION_LABEL)}</b></div>`;
+  }
+  const matches = stations.filter(s =>
+    quitarAcentos(s.name.toLowerCase()).includes(q) || String(s.number).includes(qOriginal)
+  ).slice(0, 10);
+  html += matches.map(s =>
+    `<div class="autocomplete-item" onmousedown="seleccionarRuta('${cual}','${escapeHtml(s.name)}')">${escapeHtml(s.name)} <span>${escapeHtml(s.city)} · nº${s.number}</span></div>`
+  ).join('');
+
+  if (!html) { closeAutocomplete(boxId); return; }
+  box.innerHTML = html;
+  box.style.display = 'block';
+}
+function seleccionarRuta(cual, name) {
+  const inputId = cual === 'origen' ? 'ruta-origen' : 'ruta-destino';
+  document.getElementById(inputId).value = name;
+  closeAutocomplete(cual === 'origen' ? 'route-origen-autocomplete' : 'route-destino-autocomplete');
 }
 
 // ═══════════════════════════════════════════════════════
