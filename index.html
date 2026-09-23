@@ -435,7 +435,7 @@ function renderView(view, moveMap) {
       return true;
     case 'model': {
       const matches = allBikes.filter(b => b.bikeType === view.code);
-      mostrarListaBicis(matches, `Bicicletas ${modelNames[view.code] || ('modelo ' + view.code)} (${matches.length})`, true);
+      renderBicisModelo(view.code, matches, true);
       return true;
     }
     case 'message':
@@ -715,7 +715,90 @@ function buscarPorModelo(code, btnEl) {
   if (btnEl) btnEl.classList.add('active');
   tabViews.modelo = { type: 'model', code };
   const matches = allBikes.filter(b => b.bikeType === code);
-  mostrarListaBicis(matches, `Bicicletas ${modelNames[code] || ('modelo ' + code)} (${matches.length})`);
+  renderBicisModelo(code, matches, false);
+}
+
+async function renderBicisModelo(code, matches, silent) {
+  if (!silent) {
+    if (window.innerWidth <= 768 && !sidebarOpen) toggleSidebar(true);
+    resetResultsScroll();
+  }
+  hideAllPanels();
+  
+  const el = document.getElementById('generic-list');
+  const title = `Bicicletas ${modelNames[code] || ('modelo ' + code)} (${matches.length})`;
+  let html = `<div class="panel-heading"><span>${escapeHtml(title)}</span></div>`;
+  
+  if (matches.length) {
+    html += matches.map(bikeCardHtmlWithStation).join('');
+  } else {
+    html += `<div class="empty-state"><span class="big">🚲</span>No hay bicicletas de este tipo en ninguna parada.</div>`;
+  }
+  
+  // Mostrar layout base
+  el.innerHTML = html + `<div id="missing-bikes-container" style="text-align:center; padding:20px;"><span class="spinner" style="border-color:var(--ink) transparent var(--ink) transparent; width:20px; height:20px;"></span></div>`;
+  el.style.display = 'block';
+
+  try {
+    const bicisUrl = ULTIMA_API.replace('/ultima', '/bicis');
+    const res = await fetch(bicisUrl);
+    const text = await res.text();
+    
+    // Parsear tabla HTML
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(text, 'text/html');
+    const rows = doc.querySelectorAll('tbody tr');
+    
+    const missingBikes = [];
+    rows.forEach(r => {
+      const cells = r.querySelectorAll('td');
+      if (cells.length < 6) return;
+      const num = cells[0].textContent.trim();
+      const city = cells[1].textContent.trim();
+      const station = cells[2].textContent.trim();
+      const modeloStr = cells[3].textContent.trim();
+      const estado = cells[4].textContent.trim();
+      
+      // Si está en ruta y coincide con el modelo
+      if (estado === 'En ruta' && modeloStr === modelNames[code]) {
+        // Asegurarnos de que no esté mágicamente en las aparcadas (desfase de API)
+        if (!matches.some(m => m.number === num)) {
+          missingBikes.push({ num, city, station });
+        }
+      }
+    });
+
+    const container = document.getElementById('missing-bikes-container');
+    if (!container) return; // Se cambió de pestaña
+
+    if (missingBikes.length > 0) {
+      missingBikes.sort((a,b) => a.num.localeCompare(b.num));
+      let missingHtml = `
+        <div style="padding: 10px 15px; font-size: 0.85rem; color: var(--ink-soft); border-bottom: 1px solid var(--border); margin-top: 15px;">
+          Sin aparcar ahora (${missingBikes.length})
+        </div>
+      `;
+      missingHtml += missingBikes.map(b => `
+        <div class="bike-card" style="opacity: 0.6; filter: grayscale(100%);" onclick="mostrarBiciNoLocalizada('${b.num}')">
+          <div class="bike-card-top">
+            <span class="bike-badge" style="background: var(--ink-soft);">nº ${b.num}</span>
+            <span class="bike-card-loc">${escapeHtml(b.station)}</span>
+          </div>
+          <div class="bike-card-bottom" style="margin-top: 8px; justify-content: space-between;">
+            <span style="font-size: 0.8rem; color: var(--ink-soft);">En ruta</span>
+            <span class="chip">${escapeHtml(b.city)}</span>
+          </div>
+        </div>
+      `).join('');
+      container.outerHTML = missingHtml;
+    } else {
+      container.outerHTML = ''; // No hay ausentes conocidas de este modelo
+    }
+  } catch (err) {
+    console.error("Error cargando tabla de bicis", err);
+    const container = document.getElementById('missing-bikes-container');
+    if (container) container.outerHTML = '';
+  }
 }
 
 // ═══════════════════════════════════════════════════════
