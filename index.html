@@ -1190,7 +1190,10 @@ function iniciarNavegacion() {
       // línea en ese punto (como un GPS de verdad), en vez de a hacia dónde mira
       // el móvil o hacia dónde te mueves tú exactamente.
       const rumboRuta = calcularRumboRuta(match.idx);
-      if (rumboRuta != null) aplicarRumboMapa(rumboRuta);
+      if (rumboRuta != null) {
+        lastGpsHeadingTime = Date.now(); // Bloquea la brújula para que no sobreescriba esto
+        aplicarRumboMapa(rumboRuta);
+      }
     } else if (gpsHeading != null && !Number.isNaN(gpsHeading) && (speedMs == null || speedMs > 1)) {
       // Lejos del camino (o aún sin ruta calculada): el rumbo GPS (dirección real de
       // movimiento) es más fiable que la brújula del móvil, que en muchos dispositivos
