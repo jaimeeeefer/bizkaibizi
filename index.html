@@ -214,6 +214,9 @@ const RECALC_DEBOUNCE_MS = 8000; // tiempo alejado del camino antes de recalcula
 const ICON = '/img/bici-pin.png';
 const ICON_EMPTY = '/img/bici-pin-vacio.png';
 const UBICACION_LABEL = '📍 Tu ubicación';
+// URL del Worker que guarda las últimas posiciones de las bicis (endpoint /ultima).
+// Cámbiala por la de tu Worker, p. ej. 'https://bizkaibizi-logger.TU-USUARIO.workers.dev/ultima'
+const ULTIMA_API = 'https://bizkaibizi-logger.jaimeferni10.workers.dev/';
 
 // ═══════════════════════════════════════════════════════
 // CARGA DE DATOS
@@ -438,6 +441,13 @@ function renderView(view, moveMap) {
     case 'message':
       mostrarMensaje(view.icon, view.text);
       return true;
+    case 'bikeLast': {
+      // Si la bici ha vuelto a aparecer en alguna parada, se muestra su ficha normal
+      const bike = allBikes.find(b => b.number === view.number);
+      if (bike) { mostrarBici(bike, true); return true; }
+      renderBiciUltima(view);
+      return true;
+    }
     case 'route':
       mostrarRuta(view);
       return true;
@@ -577,7 +587,7 @@ function seleccionarBici(number) {
   const bike = allBikes.find(b => b.number === number);
   if (bike) mostrarBici(bike);
 }
-function buscarBici() {
+async function buscarBici() {
   const q = document.getElementById('bici-input').value.trim();
   if (!q) return;
   const exact = allBikes.find(b => b.number === q);
@@ -585,7 +595,60 @@ function buscarBici() {
   const matches = allBikes.filter(b => b.number.includes(q));
   if (matches.length === 1) mostrarBici(matches[0]);
   else if (matches.length > 1) { tabViews.bici = { type: 'bikeSearch', q }; mostrarListaBicis(matches); }
-  else mostrarSinResultados('No se ha encontrado ninguna bicicleta con ese número.');
+  else await mostrarBiciNoLocalizada(q);
+}
+
+// Bici que no está en ninguna parada: se pregunta al Worker cuál fue su última posición conocida
+async function mostrarBiciNoLocalizada(number) {
+  const sinDatos = 'No se ha encontrado ninguna bicicleta con ese número.';
+  if (!/^\d{1,12}$/.test(number) || ULTIMA_API.includes('TU-WORKER')) return mostrarSinResultados(sinDatos);
+  if (window.innerWidth <= 768 && !sidebarOpen) toggleSidebar(true);
+  setTab('bici', null, true);
+  document.getElementById('bici-input').value = number;
+  toggleClear('clear-bici', number);
+  closeAutocomplete('bike-autocomplete');
+  resetResultsScroll();
+  mostrarMensaje('⏳', 'Buscando la última ubicación conocida…');
+  let u = null;
+  try {
+    const r = await fetch(`${ULTIMA_API}?bici=${encodeURIComponent(number)}`);
+    if (r.ok) u = await r.json();
+  } catch (e) { console.error('Error consultando la última ubicación', e); }
+  if (!u) return mostrarSinResultados(sinDatos);
+  const view = { type: 'bikeLast', number, u };
+  tabViews.bici = view;
+  renderBiciUltima(view);
+}
+
+function haceTiempo(iso) {
+  const min = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 60000));
+  if (min < 1) return 'hace menos de 1 min';
+  if (min < 60) return `hace ${min} min`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `hace ${h} h ${min % 60} min`;
+  const d = Math.floor(h / 24);
+  return `hace ${d} ${d === 1 ? 'día' : 'días'}`;
+}
+
+function renderBiciUltima(view) {
+  hideAllPanels();
+  const { number, u } = view;
+  const cuando = new Date(u.since).toLocaleString('es-ES', { dateStyle: 'short', timeStyle: 'short' });
+  const station = stations.find(s => s.uid === u.uid);
+  const frase = u.docked
+    ? `Última vez vista aparcada en <b>${escapeHtml(u.station)}</b> (${escapeHtml(u.city)})`
+    : `Salió de <b>${escapeHtml(u.station)}</b> (${escapeHtml(u.city)})`;
+  const el = document.getElementById('generic-list');
+  el.innerHTML = `<div class="empty-state">
+      <span class="big">🚲</span>
+      <b>Bici nº ${escapeHtml(number)}</b><br>
+      No aparece en ninguna parada ahora mismo.<br><br>
+      ${frase}<br>
+      <span style="opacity:.8">${escapeHtml(haceTiempo(u.since))} · ${escapeHtml(cuando)}</span>
+      ${station ? `<br><br><button class="search-btn" onclick="mostrarEstacion(stations.find(s=>s.uid===${Number(u.uid)}), true)">Ver parada en el mapa</button>` : ''}
+      <div style="font-size:.78rem;opacity:.65;margin-top:14px">Puede estar en uso o retirada temporalmente por mantenimiento.</div>
+    </div>`;
+  el.style.display = 'block';
 }
 
 // ═══════════════════════════════════════════════════════
@@ -1640,6 +1703,7 @@ function updateFavsUI() {
     div.addEventListener('click', (e) => {
       if (e.target.closest('.fav-del')) return;
       if (bike) mostrarBici(bike);
+      else mostrarBiciNoLocalizada(fav.number);
     });
     listEl.appendChild(div);
   });
@@ -1690,6 +1754,8 @@ function handleURLParams() {
     const bike = allBikes.find(b => b.number === bici);
     if (bike) {
       mostrarBici(bike);
+    } else {
+      mostrarBiciNoLocalizada(bici);
     }
   }
 }
