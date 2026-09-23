@@ -1057,6 +1057,10 @@ function iniciarNavegacion() {
   mapEl.style.top = '50%';
   mapEl.style.transform = 'translate(-50%, -50%) rotate(0deg)';
   map.invalidateSize();
+  // Asegurar que la ruta azul sigue visible durante la navegación
+  if (routingLayer && !map.hasLayer(routingLayer)) {
+    routingLayer.addTo(map);
+  }
   
   compassLocked = true;
   document.getElementById('map').style.transition = 'transform 0.1s linear';
