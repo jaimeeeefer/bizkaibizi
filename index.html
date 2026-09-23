@@ -103,15 +103,22 @@
         <div style="position: relative;">
           <div class="search-input-row" style="position:relative">
             <span class="search-icon">🟢</span>
-            <input list="stations-list" id="ruta-origen" class="route-select" placeholder="Selecciona origen..." autocomplete="off" style="padding-right: 40px;">
+            <input type="text" id="ruta-origen" class="route-select" placeholder="Selecciona origen..." autocomplete="off" style="padding-right: 40px;"
+                   oninput="renderRutaDropdown('ruta-origen','ruta-origen-autocomplete')"
+                   onfocus="renderRutaDropdown('ruta-origen','ruta-origen-autocomplete')"
+                   onblur="setTimeout(()=>closeAutocomplete('ruta-origen-autocomplete'),200)">
+            <div id="ruta-origen-autocomplete"></div>
           </div>
           <div class="search-input-row" style="position:relative; margin-top: 8px;">
             <span class="search-icon">🔴</span>
-            <input list="stations-list" id="ruta-destino" class="route-select" placeholder="Selecciona destino..." autocomplete="off" style="padding-right: 40px;">
+            <input type="text" id="ruta-destino" class="route-select" placeholder="Selecciona destino..." autocomplete="off" style="padding-right: 40px;"
+                   oninput="renderRutaDropdown('ruta-destino','ruta-destino-autocomplete')"
+                   onfocus="renderRutaDropdown('ruta-destino','ruta-destino-autocomplete')"
+                   onblur="setTimeout(()=>closeAutocomplete('ruta-destino-autocomplete'),200)">
+            <div id="ruta-destino-autocomplete"></div>
           </div>
           <button class="swap-btn" onclick="invertirRuta()" title="Invertir">⇅</button>
         </div>
-        <datalist id="stations-list"></datalist>
         <button class="search-btn" onclick="calcularRuta()" style="margin-top: 8px;">Calcular ruta bici</button>
       </div>
     </div>
@@ -265,7 +272,6 @@ function procesarDatos(data) {
 
   renderMapMarkers();
   renderModelChips();
-  renderRouteOptions();
   refreshOpenPanels();
 }
 
@@ -582,12 +588,44 @@ function buscarPorModelo(code, btnEl) {
 // ═══════════════════════════════════════════════════════
 // RUTA
 // ═══════════════════════════════════════════════════════
-function renderRouteOptions() {
-  const sorted = [...stations].sort((a,b) => a.name.localeCompare(b.name));
-  const datalist = document.getElementById('stations-list');
-  if (!datalist) return;
-  datalist.innerHTML = `<option value="${UBICACION_LABEL}"></option>` +
-    sorted.map(s => `<option value="${s.name}"></option>`).join('');
+// Desplegable propio para origen/destino de ruta (en vez de <input list> nativo:
+// el datalist de HTML no muestra sugerencias en Firefox para Android, así que
+// usamos el mismo tipo de lista personalizada que ya usan Parada/Bici nº).
+function renderRutaDropdown(inputId, boxId) {
+  const input = document.getElementById(inputId);
+  const box = document.getElementById(boxId);
+  const q = input.value.trim().toLowerCase();
+  // Si el texto ya coincide con una opción elegida, mostramos la lista completa
+  // (como al enfocar vacío) en vez de una lista con un único resultado ya elegido.
+  const exact = q !== '' && (stations.some(s => s.name.toLowerCase() === q) || input.value === UBICACION_LABEL);
+  const filterText = exact ? '' : q;
+
+  const sorted = [...stations].sort((a, b) => a.name.localeCompare(b.name));
+  const matches = sorted.filter(s =>
+    !filterText || s.name.toLowerCase().includes(filterText) || s.city.toLowerCase().includes(filterText)
+  );
+  const showLocation = !filterText || UBICACION_LABEL.toLowerCase().includes(filterText);
+
+  box.innerHTML = '';
+  if (!showLocation && !matches.length) { box.style.display = 'none'; return; }
+
+  const addItem = (label, sub, value) => {
+    const div = document.createElement('div');
+    div.className = 'autocomplete-item';
+    div.innerHTML = sub ? `${escapeHtml(label)} <span>${escapeHtml(sub)}</span>` : escapeHtml(label);
+    div.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      input.value = value;
+      box.style.display = 'none';
+      box.innerHTML = '';
+    });
+    box.appendChild(div);
+  };
+
+  if (showLocation) addItem(UBICACION_LABEL, null, UBICACION_LABEL);
+  matches.forEach(s => addItem(s.name, s.city, s.name));
+
+  box.style.display = 'block';
 }
 
 // Resuelve un nombre de parada del selector de ruta a un punto {name, lat, lng}.
@@ -900,7 +938,7 @@ let navDestination = null;
 let lastNavPosition = null;
 const ROUTE_FOLLOW_MAX_DISTANCE = 35; // m: por debajo, seguimos la ruta
 const OFF_ROUTE_DISTANCE = 70;         // m: por encima, consideramos que se salió
-const REROUTE_COOLDOWN_MS = 10000;
+const REROUTE_COOLDOWN_MS = 8000;
 const ROUTE_HEADING_LOOKAHEAD = 20;    // m aprox. para calcular el rumbo de la línea
 
 function normalizarRumbo(deg) {
