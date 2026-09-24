@@ -886,6 +886,7 @@ function osrmSignFromManeuver(maneuver) {
 
 function getSignIcon(sign) {
   switch(sign) {
+    case -7: return '↖️'; // keep left
     case -3: return '↖️'; // sharp left
     case -2: return '⬅️'; // left
     case -1: return '↖️'; // slight left
@@ -893,6 +894,7 @@ function getSignIcon(sign) {
     case 1:  return '↗️'; // slight right
     case 2:  return '➡️'; // right
     case 3:  return '↗️'; // sharp right
+    case 7:  return '↗️'; // keep right
     case 4:  return '🏁'; // finish
     case 5:  return '📍'; // via reached
     case 6:  return '🔄'; // roundabout
