@@ -105,16 +105,18 @@
         <div style="position: relative;">
           <div class="search-input-row" style="position:relative">
             <span class="search-icon">🟢</span>
-            <input list="stations-list" id="ruta-origen" class="route-select" placeholder="Selecciona origen..." autocomplete="off" style="padding-right: 40px;"
-                   oninput="onRutaInput('origen')" onfocus="onRutaInput('origen')"
+            <input list="stations-list" id="ruta-origen" class="route-select" placeholder="Selecciona origen..." autocomplete="off" style="padding-right: 60px;"
+                   oninput="onRutaInput('origen');toggleClear('clear-origen',this.value)" onfocus="onRutaInput('origen')"
                    onblur="setTimeout(()=>closeAutocomplete('route-origen-autocomplete'),200)">
+            <button class="clear-btn" id="clear-origen" style="right: 25px;" onmousedown="event.preventDefault();clearRutaInput('ruta-origen','clear-origen');" title="Borrar">✖</button>
             <div id="route-origen-autocomplete"></div>
           </div>
           <div class="search-input-row" style="position:relative; margin-top: 8px;">
             <span class="search-icon">🔴</span>
-            <input list="stations-list" id="ruta-destino" class="route-select" placeholder="Selecciona destino..." autocomplete="off" style="padding-right: 40px;"
-                   oninput="onRutaInput('destino')" onfocus="onRutaInput('destino')"
+            <input list="stations-list" id="ruta-destino" class="route-select" placeholder="Selecciona destino..." autocomplete="off" style="padding-right: 60px;"
+                   oninput="onRutaInput('destino');toggleClear('clear-destino',this.value)" onfocus="onRutaInput('destino')"
                    onblur="setTimeout(()=>closeAutocomplete('route-destino-autocomplete'),200)">
+            <button class="clear-btn" id="clear-destino" style="right: 25px;" onmousedown="event.preventDefault();clearRutaInput('ruta-destino','clear-destino');" title="Borrar">✖</button>
             <div id="route-destino-autocomplete"></div>
           </div>
           <button class="swap-btn" onclick="invertirRuta()" title="Invertir">⇅</button>
@@ -499,6 +501,12 @@ function clearInput(inputId, clearId) {
   toggleClear(clearId, '');
   closeAutocomplete('stop-autocomplete');
   closeAutocomplete('bike-autocomplete');
+}
+function clearRutaInput(inputId, clearId) {
+  document.getElementById(inputId).value = '';
+  toggleClear(clearId, '');
+  closeAutocomplete('route-origen-autocomplete');
+  closeAutocomplete('route-destino-autocomplete');
 }
 function closeAutocomplete(id) {
   const el = document.getElementById(id);
@@ -1115,7 +1123,7 @@ function mostrarRuta(view) {
           <div class="station-stat"><span class="num" style="color: var(--accent) !important;">${distanceKm}</span><span class="lbl" style="color: var(--ink-soft) !important;">km</span></div>
           <div class="station-stat"><span class="num" style="color: var(--accent) !important;">${durationMin}</span><span class="lbl" style="color: var(--ink-soft) !important;">min</span></div>
         </div>
-        <button class="search-btn" style="background: var(--green); padding: 6px 12px; font-size: 0.85rem; width: auto;" onclick="iniciarNavegacion()">🧭 Iniciar</button>
+        <div style="display: flex; flex-direction: column; gap: 8px; align-items: flex-end;"><button class="search-btn" style="background: var(--green); padding: 6px 12px; font-size: 0.85rem; width: auto;" onclick="iniciarNavegacion()">🧭 Iniciar</button><button class="search-btn" style="background: var(--ink); padding: 4px 12px; font-size: 0.8rem; width: auto;" onclick="limpiarRuta()">Limpiar mapa</button></div>
       </div>
 
       ${stepsHtml ? `
@@ -1124,7 +1132,7 @@ function mostrarRuta(view) {
         ${stepsHtml}
       </div>` : ''}
 
-      <button class="search-btn" style="margin-top: 20px; background: var(--ink);" onclick="limpiarRuta()">Limpiar mapa</button>
+      
     </div>
   `;
   panel.style.display = 'block';
