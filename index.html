@@ -1123,7 +1123,7 @@ function mostrarRuta(view) {
           <div class="station-stat"><span class="num" style="color: var(--accent) !important;">${distanceKm}</span><span class="lbl" style="color: var(--ink-soft) !important;">km</span></div>
           <div class="station-stat"><span class="num" style="color: var(--accent) !important;">${durationMin}</span><span class="lbl" style="color: var(--ink-soft) !important;">min</span></div>
         </div>
-        <div style="display: flex; flex-direction: column; gap: 8px; align-items: flex-end;"><button class="search-btn" style="background: var(--green); padding: 6px 12px; font-size: 0.85rem; width: auto;" onclick="iniciarNavegacion()">🧭 Iniciar</button><button class="search-btn" style="background: var(--ink); padding: 4px 12px; font-size: 0.8rem; width: auto;" onclick="limpiarRuta()">Limpiar mapa</button></div>
+        <div style="display: flex; flex-direction: column; gap: 8px; align-items: stretch;"><button class="search-btn" style="background: var(--green); padding: 6px 12px; font-size: 0.85rem; width: auto;" onclick="iniciarNavegacion()">🧭 Iniciar</button><button class="search-btn" style="background: var(--ink); padding: 6px 12px; font-size: 0.85rem; width: auto;" onclick="limpiarRuta()">Limpiar mapa</button></div>
       </div>
 
       ${stepsHtml ? `
